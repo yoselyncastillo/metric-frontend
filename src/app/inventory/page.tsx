@@ -1,25 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { inventoryService, Store, Supply, UnitConversion, SupplyFormat } from "@/services/inventory";
-import { 
-  Package, 
-  Store as StoreIcon, 
-  Plus, 
-  Receipt,
-  X,
-  ChevronDown,
-  ChevronUp,
-  MapPin,
-  Phone,
-  Camera,
-  Map,
-  Edit2,
-  Trash2,
-  Save
+import { inventoryService, Supply, Store, Batch } from "@/services/inventory";
+import {
+  Package, Store as StoreIcon, Plus, ChevronDown, ChevronRight,
+  Edit2, Trash2, Calendar, ShoppingCart, DollarSign,
+  AlertCircle, CheckCircle2, X, RefreshCw, Layers
 } from "lucide-react";
 import React from "react";
+
+const BASE_CATEGORIES = ["Materia Prima", "Semielaborados", "Empaque y Desechables"];
 
 export default function InventoryPage() {
   const router = useRouter();
@@ -28,61 +19,47 @@ export default function InventoryPage() {
   const [stores, setStores] = useState<Store[]>([]);
   const [supplies, setSupplies] = useState<Supply[]>([]);
   const [loadingInit, setLoadingInit] = useState(true);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [newStoreName, setNewStoreName] = useState("");
+  const [newStoreAddress, setNewStoreAddress] = useState("");
+  const [newStorePhone, setNewStorePhone] = useState("");
+  const [newStoreIg, setNewStoreIg] = useState("");
+  const [newStoreMaps, setNewStoreMaps] = useState("");
 
-  // Accordion state
+  // Categories Engine
+  const allCategories = useMemo(() => {
+    const cats = new Set(BASE_CATEGORIES);
+    supplies.forEach(s => {
+      if (s.category && s.category.trim() !== "") {
+        cats.add(s.category.trim());
+      }
+    });
+    return Array.from(cats);
+  }, [supplies]);
+
+  // Grouped Supplies
+  const groupedSupplies = useMemo(() => {
+    const groups: Record<string, Supply[]> = {};
+    allCategories.forEach(c => groups[c] = []);
+    groups["Sin Categoría"] = [];
+
+    supplies.forEach(s => {
+      const cat = (s.category && s.category.trim() !== "") ? s.category.trim() : "Sin Categoría";
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(s);
+    });
+    return groups;
+  }, [supplies, allCategories]);
+
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set(BASE_CATEGORIES));
+
+  // --- PANELS STATE ---
+  const [invoicePanelOpen, setInvoicePanelOpen] = useState(false);
+  const [editSupplyPanel, setEditSupplyPanel] = useState<Supply | null>(null);
   const [expandedSupplyId, setExpandedSupplyId] = useState<string | number | null>(null);
-
-  // Side Panel State
-  const [sidePanelMode, setSidePanelMode] = useState<"NEW" | Supply | null>(null);
-  const [panelTab, setPanelTab] = useState<"DETAILS" | "CONVERSIONS" | "FORMATS">("DETAILS");
-
-  // New Supply State
-  const [supplyName, setSupplyName] = useState("");
-  const [supplyUnit, setSupplyUnit] = useState("g");
-  const [supplyInitQty, setSupplyInitQty] = useState("");
-  const [supplyTotalPaid, setSupplyTotalPaid] = useState("");
-
-  // Edit Supply State
-  const [editSupplyName, setEditSupplyName] = useState("");
-  
-  // Conversions State
-  const [convName, setConvName] = useState("");
-  const [convFactor, setConvFactor] = useState("");
-
-  // Formats State
-  const [formatName, setFormatName] = useState("");
-  const [formatQty, setFormatQty] = useState("");
-
-  // Modals state
-  const [selectedSupplyForBatch, setSelectedSupplyForBatch] = useState<Supply | null>(null);
-
-  // Store Form states
-  const [storeName, setStoreName] = useState("");
-  const [storeAddress, setStoreAddress] = useState("");
-  const [storePhone, setStorePhone] = useState("");
-  const [storeInsta, setStoreInsta] = useState("");
-  const [storeMaps, setStoreMaps] = useState("");
-  
-  // Batch Form states
-  const [batchQuantity, setBatchQuantity] = useState("");
-  const [batchUnitCost, setBatchUnitCost] = useState("");
-  const [batchStoreId, setBatchStoreId] = useState("");
-  const [batchExpiration, setBatchExpiration] = useState("");
-
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleDeleteSupply = async (id: string | number) => {
-    if (!confirm('¿Estás seguro de que deseas eliminar este insumo? Esta acción no se puede deshacer.')) return;
-    
-    try {
-      await inventoryService.deleteSupply(id);
-      fetchData(); // refresh list
-    } catch (err) {
-      console.error(err);
-      setError("Error al eliminar el insumo.");
-    }
-  };
+  const [newSupplyPanel, setNewSupplyPanel] = useState(false);
 
   const fetchData = async () => {
     try {
@@ -92,12 +69,12 @@ export default function InventoryPage() {
       ]);
       setStores(storesData);
       setSupplies(suppliesData);
-      
-      // Update selected supply in edit mode if needed
-      if (sidePanelMode && sidePanelMode !== "NEW") {
-        const updated = suppliesData.find(s => s.id === (sidePanelMode as Supply).id);
-        if (updated) setSidePanelMode(updated);
-      }
+
+      // Update panels if they are open using functional state to avoid closure race conditions
+      setEditSupplyPanel(prev => {
+        if (!prev) return null;
+        return suppliesData.find(s => s.id === prev.id) || null;
+      });
     } catch (err) {
       console.error(err);
     } finally {
@@ -114,905 +91,948 @@ export default function InventoryPage() {
     fetchData();
   }, [router]);
 
-  // --- STORE ACTIONS ---
-  const handleCreateStore = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
-    setError(null);
-    try {
-      await inventoryService.createStore({
-        name: storeName,
-        address: storeAddress,
-        phone: storePhone,
-        instagramUrl: storeInsta,
-        mapsUrl: storeMaps
-      });
-      setStoreName("");
-      setStoreAddress("");
-      setStorePhone("");
-      setStoreInsta("");
-      setStoreMaps("");
-      await fetchData();
-    } catch (err: unknown) {
-      if (err instanceof Error) setError(err.message);
-      else setError("Error al crear la tienda");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  // --- BATCH ACTIONS ---
-  const handleCreateBatch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedSupplyForBatch || !batchStoreId) {
-      setError("Por favor selecciona una tienda válida.");
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    try {
-      await inventoryService.createBatch({
-        supplyId: selectedSupplyForBatch.id,
-        storeId: batchStoreId,
-        quantity: Number(batchQuantity),
-        unitCost: Number(batchUnitCost),
-        expirationDate: batchExpiration || null
-      });
-      setBatchQuantity("");
-      setBatchUnitCost("");
-      setBatchStoreId("");
-      setBatchExpiration("");
-      setSelectedSupplyForBatch(null);
-      await fetchData();
-    } catch (err: unknown) {
-      if (err instanceof Error) setError(err.message);
-      else setError("Error al registrar el lote");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  // --- PANEL ACTIONS ---
-  const openNewSupplyPanel = () => {
-    setSupplyName("");
-    setSupplyUnit("g");
-    setSupplyInitQty("");
-    setSupplyTotalPaid("");
-    setSidePanelMode("NEW");
-  };
-
-  const openEditSupplyPanel = (supply: Supply) => {
-    setEditSupplyName(supply.name);
-    setPanelTab("DETAILS");
-    setSidePanelMode(supply);
-  };
-
-  const closePanel = () => {
-    setSidePanelMode(null);
-    setError(null);
-  };
-
-  const handleCreateSupply = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
-    setError(null);
-    try {
-      await inventoryService.createSupply({
-        name: supplyName,
-        unit: supplyUnit,
-        initialQuantity: supplyInitQty ? Number(supplyInitQty) : undefined,
-        totalPaid: supplyTotalPaid ? Number(supplyTotalPaid) : undefined
-      });
-      closePanel();
-      await fetchData();
-    } catch (err: unknown) {
-      if (err instanceof Error) setError(err.message);
-      else setError("Error al crear el insumo");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleUpdateSupplyName = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (sidePanelMode === "NEW" || !sidePanelMode) return;
-    setSaving(true);
-    setError(null);
-    try {
-      await inventoryService.updateSupply(sidePanelMode.id, { name: editSupplyName });
-      await fetchData();
-    } catch (err: unknown) {
-      if (err instanceof Error) setError(err.message);
-      else setError("Error al actualizar el insumo");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleAddConversion = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (sidePanelMode === "NEW" || !sidePanelMode) return;
-    setSaving(true);
-    setError(null);
-    try {
-      await inventoryService.addConversion(sidePanelMode.id, {
-        name: convName,
-        factor: Number(convFactor)
-      });
-      setConvName("");
-      setConvFactor("");
-      await fetchData();
-    } catch (err: unknown) {
-      if (err instanceof Error) setError(err.message);
-      else setError("Error al agregar conversión");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleRemoveConversion = async (id: string | number) => {
-    if (!confirm("¿Eliminar esta conversión? Si está siendo usada en recetas, podría fallar.")) return;
-    setSaving(true);
-    setError(null);
-    try {
-      await inventoryService.removeConversion(id);
-      await fetchData();
-    } catch (err: unknown) {
-      if (err instanceof Error) setError(err.message);
-      else setError("Error al eliminar conversión. Verifica que no esté en uso.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleAddFormat = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (sidePanelMode === "NEW" || !sidePanelMode) return;
-    setSaving(true);
-    setError(null);
-    try {
-      await inventoryService.addFormat({
-        name: formatName,
-        quantity: Number(formatQty),
-        supplyId: sidePanelMode.id
-      });
-      setFormatName("");
-      setFormatQty("");
-      await fetchData();
-    } catch (err: unknown) {
-      if (err instanceof Error) setError(err.message);
-      else setError("Error al agregar formato");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const toggleAccordion = (id: string | number) => {
-    if (expandedSupplyId === id) setExpandedSupplyId(null);
-    else setExpandedSupplyId(id);
-  };
-
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(amount);
   };
 
+  const formatDate = (isoString: string) => {
+    return new Date(isoString).toLocaleDateString('es-MX', { year: 'numeric', month: 'short', day: 'numeric' });
+  };
+
+  const toggleCategory = (cat: string) => {
+    const next = new Set(expandedCategories);
+    if (next.has(cat)) next.delete(cat);
+    else next.add(cat);
+    setExpandedCategories(next);
+  };
+
+  const showSuccess = (msg: string) => {
+    setSuccessMsg(msg);
+    setTimeout(() => setSuccessMsg(null), 3000);
+  };
+
+  const showError = (msg: string) => {
+    setErrorMsg(msg);
+    setTimeout(() => setErrorMsg(null), 4000);
+  };
+
+  // --- SUPPLY ACTIONS ---
+  const [newSupplyName, setNewSupplyName] = useState("");
+  const [newSupplyUnit, setNewSupplyUnit] = useState("g");
+  const [newSupplyCat, setNewSupplyCat] = useState("");
+  const [isNewCatCustom, setIsNewCatCustom] = useState(false);
+  const [newSupplyStoreId, setNewSupplyStoreId] = useState("");
+  const [newSupplyInitQty, setNewSupplyInitQty] = useState("");
+  const [newSupplyTotalPaid, setNewSupplyTotalPaid] = useState("");
+
+  const handleCreateStore = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newStoreName.trim()) return;
+    setIsSubmitting(true);
+    try {
+      await inventoryService.createStore({ 
+        name: newStoreName,
+        address: newStoreAddress,
+        phone: newStorePhone,
+        instagramUrl: newStoreIg,
+        mapsUrl: newStoreMaps
+      });
+      showSuccess("Tienda/Proveedor creado con éxito.");
+      setNewStoreName("");
+      setNewStoreAddress("");
+      setNewStorePhone("");
+      setNewStoreIg("");
+      setNewStoreMaps("");
+      fetchData();
+    } catch (err: any) {
+      showError(err.message || "Error al crear proveedor.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDeleteStore = async (id: string | number) => {
+    if (!confirm('¿Eliminar este proveedor?')) return;
+    try {
+      await inventoryService.deleteStore(id);
+      showSuccess("Proveedor eliminado.");
+      fetchData();
+    } catch (err: any) {
+      showError(err.message || "Error al eliminar proveedor.");
+    }
+  };
+  
+  const handleCreateSupply = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newSupplyName.trim()) return;
+    setIsSubmitting(true);
+    try {
+      const supply = await inventoryService.createSupply({
+        name: newSupplyName,
+        unit: newSupplyUnit,
+        category: newSupplyCat || undefined,
+        initialQuantity: newSupplyInitQty ? Number(newSupplyInitQty) : undefined,
+        totalPaid: newSupplyTotalPaid ? Number(newSupplyTotalPaid) : undefined,
+        storeId: newSupplyStoreId ? Number(newSupplyStoreId) : undefined
+      });
+      showSuccess("Insumo creado con éxito.");
+      setNewSupplyPanel(false);
+      setNewSupplyName("");
+      setNewSupplyCat("");
+      setNewSupplyInitQty("");
+      setNewSupplyTotalPaid("");
+      setNewSupplyStoreId("");
+      fetchData();
+    } catch (err: any) {
+      showError(err.message || "Error al crear insumo.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDeleteSupply = async (id: string | number) => {
+    if (!confirm('¿Estás seguro de que deseas eliminar este insumo y TODO su historial? Esta acción no se puede deshacer.')) return;
+    try {
+      await inventoryService.deleteSupply(id);
+      showSuccess("Insumo eliminado.");
+      if (expandedSupplyId === id) setExpandedSupplyId(null);
+      if (editSupplyPanel?.id === id) setEditSupplyPanel(null);
+      fetchData();
+    } catch (err: any) {
+      showError(err.message || "Error al eliminar insumo.");
+    }
+  };
+
+  // --- INVOICE REGISTRATION ---
+  // Convert local date (YYYY-MM-DD) to an ISO string that corresponds to the same day in local time
+  const getLocalDateISO = (dateStr: string) => {
+    if (!dateStr) return undefined;
+    const date = new Date(dateStr + "T12:00:00");
+    return date.toISOString();
+  };
+
+  const [invoiceStoreId, setInvoiceStoreId] = useState("");
+  const [invoiceDate, setInvoiceDate] = useState(new Date().toLocaleDateString('en-CA')); // YYYY-MM-DD format based on local time
+  const [invoiceRows, setInvoiceRows] = useState([{ supplyId: "", quantity: "", totalCost: "" }]);
+
+  const addInvoiceRow = () => {
+    setInvoiceRows([...invoiceRows, { supplyId: "", quantity: "", totalCost: "" }]);
+  };
+
+  const removeInvoiceRow = (index: number) => {
+    const rows = [...invoiceRows];
+    rows.splice(index, 1);
+    setInvoiceRows(rows);
+  };
+
+  const updateInvoiceRow = (index: number, field: string, value: string) => {
+    const rows = [...invoiceRows];
+    (rows[index] as any)[field] = value;
+    setInvoiceRows(rows);
+  };
+
+  const handleInvoiceSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (invoiceRows.length === 0 || !invoiceStoreId) {
+      showError("Debes seleccionar una tienda y al menos un insumo.");
+      return;
+    }
+    const validRows = invoiceRows.filter(r => r.supplyId && Number(r.quantity) > 0 && Number(r.totalCost) >= 0);
+    if (validRows.length === 0) {
+      showError("Las filas ingresadas no son válidas.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const promises = validRows.map(row => 
+        inventoryService.createBatch({
+          supplyId: row.supplyId,
+          storeId: invoiceStoreId,
+          quantity: Number(row.quantity),
+          unitCost: Number(row.totalCost) / Number(row.quantity),
+          createdAt: getLocalDateISO(invoiceDate)
+        })
+      );
+      await Promise.all(promises);
+      showSuccess("¡Factura registrada con éxito!");
+      setInvoicePanelOpen(false);
+      setInvoiceRows([{ supplyId: "", quantity: "", totalCost: "" }]);
+      fetchData();
+    } catch (err: any) {
+      showError(err.message || "Error al registrar la factura.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // --- EDIT BATCH INLINE ---
+  const [editingBatchId, setEditingBatchId] = useState<string | number | null>(null);
+  const [editBatchQty, setEditBatchQty] = useState("");
+  const [editBatchRem, setEditBatchRem] = useState("");
+  const [editBatchTotalPaid, setEditBatchTotalPaid] = useState("");
+
+  const startEditingBatch = (batch: Batch) => {
+    setEditingBatchId(batch.id);
+    setEditBatchQty(batch.initialQuantity.toString());
+    setEditBatchRem(batch.remainingQuantity.toString());
+    setEditBatchTotalPaid((Number(batch.costPerUnit) * Number(batch.initialQuantity)).toString());
+  };
+
+  const cancelEditingBatch = () => {
+    setEditingBatchId(null);
+  };
+
+  const handleSaveBatch = async (batchId: string | number) => {
+    try {
+      await inventoryService.updateBatch(batchId, {
+        quantity: Number(editBatchQty),
+        remainingQuantity: Number(editBatchRem),
+        price: Number(editBatchTotalPaid) / Number(editBatchQty)
+      });
+      showSuccess("Lote actualizado.");
+      setEditingBatchId(null);
+      fetchData();
+    } catch (err: any) {
+      showError(err.message || "Error al actualizar lote.");
+    }
+  };
+
+  const handleDeleteBatch = async (batchId: string | number) => {
+    if (!confirm("¿Eliminar este lote permanentemente?")) return;
+    try {
+      await inventoryService.deleteBatch(batchId);
+      showSuccess("Lote eliminado.");
+      fetchData();
+    } catch (err: any) {
+      showError(err.message || "Error al eliminar lote.");
+    }
+  };
+
+  // --- EDIT SUPPLY ---
+  const [editSupplyCat, setEditSupplyCat] = useState("");
+  const [editSupplyNameLocal, setEditSupplyNameLocal] = useState("");
+  
+  const openEditSupply = (s: Supply) => {
+    setEditSupplyCat(s.category || "");
+    setEditSupplyNameLocal(s.name);
+    setEditSupplyPanel(s);
+  };
+
+  const handleSaveSupply = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editSupplyPanel) return;
+    setIsSubmitting(true);
+    try {
+      await inventoryService.updateSupply(editSupplyPanel.id, {
+        name: editSupplyNameLocal,
+        category: editSupplyCat
+      });
+      showSuccess("Insumo actualizado.");
+      setEditSupplyPanel(null);
+      fetchData();
+    } catch (err: any) {
+      showError(err.message || "Error al actualizar insumo.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   if (loadingInit) {
     return (
-      <div className="flex h-full min-h-screen items-center justify-center p-8 bg-stone-50">
+      <div className="flex h-screen items-center justify-center p-8 bg-stone-50">
         <div className="w-8 h-8 border-4 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
       </div>
     );
   }
 
+  // Global sorting for batch history is removed because it's now computed per expanded supply row
+
   return (
-    <div className="p-8 max-w-7xl mx-auto h-full min-h-screen flex flex-col bg-stone-50 relative">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-stone-800 mb-2">Inventario & Lotes</h1>
-        <p className="text-stone-500">Gestiona tu materia prima, registra facturas y proveedores.</p>
+    <div className="min-h-screen bg-stone-50 text-stone-800 pb-20 relative">
+      
+      {/* GLOBAL TOASTS */}
+      <div className="fixed top-6 left-1/2 transform -translate-x-1/2 z-50 flex flex-col gap-2 w-full max-w-md px-4 pointer-events-none">
+        {successMsg && (
+          <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-xl flex items-center gap-3 shadow-xl animate-in slide-in-from-top-4 fade-in pointer-events-auto">
+            <CheckCircle2 size={20} className="shrink-0" />
+            <span className="font-medium text-sm">{successMsg}</span>
+          </div>
+        )}
+        {errorMsg && (
+          <div className="p-4 bg-red-50 border border-red-200 text-red-700 rounded-xl flex items-center gap-3 shadow-xl animate-in slide-in-from-top-4 fade-in pointer-events-auto">
+            <AlertCircle size={20} className="shrink-0" />
+            <span className="font-medium text-sm">{errorMsg}</span>
+          </div>
+        )}
       </div>
 
-      {error && !sidePanelMode && (
-        <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-700 rounded-lg flex justify-between items-center">
-          <span>{error}</span>
-          <button onClick={() => setError(null)} className="text-red-700 hover:text-red-900">
-            <X size={18} />
-          </button>
-        </div>
-      )}
-
-      {/* Tabs Nav */}
-      <div className="flex space-x-1 bg-stone-200/50 p-1 rounded-xl w-fit mb-8 border border-stone-200">
-        <button
-          onClick={() => setActiveTab("supplies")}
-          className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 ${
-            activeTab === "supplies"
-              ? "bg-white text-stone-800 shadow-sm"
-              : "text-stone-500 hover:text-stone-700 hover:bg-stone-200/50"
-          }`}
-        >
-          <Package size={18} />
-          Materia Prima e Ingresos
-        </button>
-        <button
-          onClick={() => setActiveTab("stores")}
-          className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 ${
-            activeTab === "stores"
-              ? "bg-white text-stone-800 shadow-sm"
-              : "text-stone-500 hover:text-stone-700 hover:bg-stone-200/50"
-          }`}
-        >
-          <StoreIcon size={18} />
-          Proveedores / Tiendas
-        </button>
-      </div>
-
-      {/* Tab 1: Supplies */}
-      {activeTab === "supplies" && (
-        <div className="bg-white rounded-2xl shadow-sm border border-stone-200/60 flex-1 overflow-hidden flex flex-col">
-          <div className="p-6 border-b border-stone-100 bg-white flex justify-between items-center">
-            <div>
-              <h2 className="text-lg font-semibold text-stone-800">Catálogo de Insumos</h2>
-              <p className="text-sm text-stone-500 mt-1">Registra nuevos ingredientes o ingresa lotes a inventario.</p>
-            </div>
+      {/* HEADER */}
+      <div className="bg-white border-b border-stone-200 sticky top-0 z-20 shadow-sm">
+        <div className="max-w-[1400px] mx-auto px-6 py-5 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+          <div>
+            <h1 className="text-2xl font-black text-stone-800 tracking-tight">Inventario y Compras</h1>
+            <p className="text-sm text-stone-500">Gestiona tus insumos, lotes y proveedores.</p>
+          </div>
+          <div className="flex items-center gap-3 w-full md:w-auto">
             <button
-              onClick={openNewSupplyPanel}
-              className="flex items-center gap-2 px-4 py-2 bg-stone-800 text-stone-50 rounded-lg hover:bg-stone-900 transition-colors text-sm font-medium"
+              onClick={() => setNewSupplyPanel(true)}
+              className="flex-1 md:flex-none justify-center flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-stone-700 bg-stone-100 hover:bg-stone-200 rounded-xl transition-colors border border-stone-200 shadow-sm"
             >
-              <Plus size={16} />
+              <Package size={16} />
               Nuevo Insumo
             </button>
-          </div>
-          
-          <div className="overflow-x-auto flex-1">
-            <table className="w-full text-left border-collapse min-w-max">
-              <thead>
-                <tr className="bg-stone-50/50 text-stone-500 text-xs uppercase tracking-wider border-b border-stone-100">
-                  <th className="p-4 pl-6 font-medium">Insumo</th>
-                  <th className="p-4 font-medium text-center">Unidad de Medida</th>
-                  <th className="p-4 font-medium text-right">Stock Disponible Total</th>
-                  <th className="p-4 pr-6 font-medium text-right">Acciones</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-stone-100">
-                {supplies.length === 0 ? (
-                  <tr>
-                    <td colSpan={4} className="p-12 text-center text-stone-500">
-                      No hay insumos registrados.
-                    </td>
-                  </tr>
-                ) : (
-                  supplies.map((supply) => (
-                    <React.Fragment key={supply.id}>
-                      <tr className="hover:bg-stone-50/50 transition-colors group">
-                        <td className="p-4 pl-6">
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => toggleAccordion(supply.id)}
-                              className="text-stone-400 hover:text-stone-700 transition-colors bg-stone-100 hover:bg-stone-200 p-1 rounded-md"
-                              title="Ver Lotes"
-                            >
-                              {expandedSupplyId === supply.id ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                            </button>
-                            <span className="font-medium text-stone-800">{supply.name}</span>
-                          </div>
-                        </td>
-                        <td className="p-4 text-center text-stone-600">
-                          <span className="px-2.5 py-1 bg-stone-100 text-stone-600 rounded-md text-xs font-medium uppercase">
-                            {supply.unit}
-                          </span>
-                        </td>
-                        <td className="p-4 text-right">
-                          <span className="font-semibold text-stone-800 text-lg">
-                            {Number(supply.totalAvailable || 0).toLocaleString()}
-                          </span>
-                          <span className="text-sm text-stone-500 ml-1">{supply.unit}</span>
-                        </td>
-                        <td className="p-4 pr-6 text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <button
-                              onClick={() => openEditSupplyPanel(supply)}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-stone-600 bg-stone-100 hover:bg-stone-200 rounded-md transition-colors"
-                            >
-                              <Edit2 size={14} />
-                              Ajustes
-                            </button>
-                            <button
-                              onClick={() => setSelectedSupplyForBatch(supply)}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-md transition-colors"
-                            >
-                              <Receipt size={14} />
-                              Ingresar Lote
-                            </button>
-                            <button
-                              onClick={() => handleDeleteSupply(supply.id)}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-md transition-colors"
-                              title="Eliminar insumo"
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                      {/* Lotes Accordion */}
-                      {expandedSupplyId === supply.id && (
-                        <tr>
-                          <td colSpan={4} className="p-0 border-b border-stone-100 bg-stone-50/80">
-                            <div className="px-10 py-4 shadow-inner">
-                              <h4 className="text-xs font-semibold text-stone-500 uppercase tracking-wider mb-3">Lotes Activos (FIFO)</h4>
-                              {supply.batches && supply.batches.length > 0 ? (
-                                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                                  {supply.batches.map(batch => (
-                                    <div key={batch.id} className="bg-white border border-stone-200 rounded-lg p-3 text-sm flex flex-col gap-2 shadow-sm">
-                                      <div className="flex justify-between items-center border-b border-stone-100 pb-2">
-                                        <span className="font-medium text-stone-800">Quedan {Number(batch.remainingQuantity).toLocaleString()} {supply.unit}</span>
-                                        <span className="text-xs text-stone-400">{new Date(batch.createdAt).toLocaleDateString()}</span>
-                                      </div>
-                                      <div className="flex justify-between items-center text-stone-600">
-                                        <span>Costo Unitario:</span>
-                                        <span className="font-medium text-stone-900">{formatCurrency(Number(batch.costPerUnit))}</span>
-                                      </div>
-                                      {batch.store && (
-                                        <div className="flex items-center gap-1.5 text-stone-500 mt-1">
-                                          <StoreIcon size={14} />
-                                          <span className="truncate">{batch.store.name}</span>
-                                        </div>
-                                      )}
-                                    </div>
-                                  ))}
-                                </div>
-                              ) : (
-                                <p className="text-sm text-stone-500 italic">No hay lotes con stock disponible para este insumo.</p>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                    </React.Fragment>
-                  ))
-                )}
-              </tbody>
-            </table>
+            <button
+              onClick={() => setInvoicePanelOpen(true)}
+              className="flex-1 md:flex-none justify-center flex items-center gap-2 px-6 py-2.5 text-sm font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-xl transition-all shadow-sm shadow-amber-600/20"
+            >
+              <ShoppingCart size={16} />
+              + Registrar Compra
+            </button>
           </div>
         </div>
-      )}
+        
+        {/* TABS */}
+        <div className="max-w-[1400px] mx-auto px-6 flex gap-6">
+          <button
+            className={`pb-4 pt-2 text-sm font-bold border-b-2 transition-colors ${activeTab === "supplies" ? "border-amber-500 text-amber-700" : "border-transparent text-stone-400 hover:text-stone-600"}`}
+            onClick={() => setActiveTab("supplies")}
+          >
+            Insumos & Lotes
+          </button>
+          <button
+            className={`pb-4 pt-2 text-sm font-bold border-b-2 transition-colors ${activeTab === "stores" ? "border-amber-500 text-amber-700" : "border-transparent text-stone-400 hover:text-stone-600"}`}
+            onClick={() => setActiveTab("stores")}
+          >
+            Proveedores
+          </button>
+        </div>
+      </div>
 
-      {/* Tab 2: Stores */}
-      {activeTab === "stores" && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-2 space-y-4">
-            {stores.length === 0 ? (
-              <div className="bg-white rounded-2xl shadow-sm border border-stone-200/60 p-12 text-center text-stone-500">
-                <StoreIcon size={48} className="mx-auto mb-4 text-stone-300" />
-                No hay proveedores registrados.
-              </div>
-            ) : (
-              stores.map((store) => {
-                const uniqueProducts = Array.from(new Set(
-                  (store.batches || []).map(b => b.supply?.name).filter(Boolean)
-                ));
+      <div className="max-w-[1400px] mx-auto px-6 mt-8">
+        
+        {/* TAB 1: SUPPLIES */}
+        {activeTab === "supplies" && (
+          <div className="space-y-6">
+            {Object.entries(groupedSupplies).map(([category, items]) => {
+              const isExpanded = expandedCategories.has(category);
+              if (items.length === 0) return null;
 
-                return (
-                  <div key={store.id} className="bg-white rounded-2xl shadow-sm border border-stone-200/60 p-6 flex flex-col sm:flex-row sm:items-start justify-between gap-6 hover:border-stone-300 transition-colors">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-3 mb-2">
-                        <div className="w-10 h-10 bg-amber-50 text-amber-600 rounded-lg flex items-center justify-center shrink-0">
-                          <StoreIcon size={20} />
-                        </div>
-                        <h2 className="text-xl font-bold text-stone-800">{store.name}</h2>
+              return (
+                <div key={category} className="bg-white rounded-2xl border border-stone-200/80 shadow-sm overflow-hidden">
+                  <button 
+                    onClick={() => toggleCategory(category)}
+                    className="w-full flex items-center justify-between p-5 bg-stone-50/50 hover:bg-stone-100/50 transition-colors border-b border-stone-100"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-white border border-stone-200 flex items-center justify-center text-stone-400 shadow-sm">
+                        <Layers size={16} />
                       </div>
+                      <h2 className="text-lg font-bold text-stone-800">{category}</h2>
+                      <span className="bg-stone-200 text-stone-600 text-xs font-bold px-2 py-0.5 rounded-full">{items.length}</span>
+                    </div>
+                    {isExpanded ? <ChevronDown size={20} className="text-stone-400" /> : <ChevronRight size={20} className="text-stone-400" />}
+                  </button>
+
+                  {isExpanded && (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left">
+                        <thead>
+                          <tr className="border-b border-stone-100 text-[10px] uppercase tracking-widest text-stone-400 bg-white">
+                            <th className="p-4 pl-6 font-semibold">Insumo</th>
+                            <th className="p-4 font-semibold text-right">Stock Total</th>
+                            <th className="p-4 pr-6 font-semibold text-right">Acciones</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-stone-50">
+                          {items.map(supply => {
+                            const isExpandedSupply = expandedSupplyId === supply.id;
+                            const sortedBatches = supply.batches 
+                              ? [...supply.batches].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+                              : [];
+                            return (
+                            <React.Fragment key={supply.id}>
+                              <tr 
+                                className={`hover:bg-amber-50/30 transition-colors cursor-pointer group ${isExpandedSupply ? 'bg-amber-50/50' : ''}`}
+                                onClick={() => { setExpandedSupplyId(isExpandedSupply ? null : supply.id); cancelEditingBatch(); }}
+                              >
+                                <td className="p-4 pl-6">
+                                  <p className="font-bold text-stone-800 group-hover:text-amber-700 transition-colors flex items-center gap-2">
+                                    {isExpandedSupply ? <ChevronDown size={16} className="text-amber-600" /> : <ChevronRight size={16} className="text-stone-300" />}
+                                    {supply.name}
+                                  </p>
+                                </td>
+                                <td className="p-4 text-right">
+                                  <span className="text-lg font-black text-stone-700 mr-1">{Number(supply.totalAvailable || 0).toFixed(2)}</span>
+                                  <span className="text-xs font-bold text-stone-400">{supply.unit}</span>
+                                </td>
+                                <td className="p-4 pr-6 text-right">
+                                  <div className="flex items-center justify-end gap-2" onClick={e => e.stopPropagation()}>
+                                    <button onClick={() => openEditSupply(supply)} className="p-2 text-stone-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors">
+                                      <Edit2 size={16} />
+                                    </button>
+                                    <button onClick={() => handleDeleteSupply(supply.id)} className="p-2 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
+                                      <Trash2 size={16} />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                              
+                              {/* ACCORDION BATCH HISTORY */}
+                              {isExpandedSupply && (
+                                <tr>
+                                  <td colSpan={3} className="p-0 border-b border-stone-200">
+                                    <div className="bg-stone-50/80 px-8 py-6 shadow-inner border-t border-stone-200/50">
+                                      <div className="bg-white rounded-xl border border-stone-200 shadow-sm overflow-hidden">
+                                        <table className="w-full text-left">
+                                          <thead>
+                                            <tr className="bg-stone-100 border-b border-stone-200 text-[10px] uppercase tracking-widest text-stone-500">
+                                              <th className="p-4 pl-6 font-bold">Fecha / Tienda</th>
+                                              <th className="p-4 font-bold text-right">Cant. Actual / Inicial</th>
+                                              <th className="p-4 font-bold text-right">Costo Unit.</th>
+                                              <th className="p-4 font-bold text-right text-amber-700">Total Lote</th>
+                                              <th className="p-4 pr-6 font-bold text-right">Acciones</th>
+                                            </tr>
+                                          </thead>
+                                          <tbody className="divide-y divide-stone-100">
+                                            {sortedBatches.length === 0 ? (
+                                              <tr><td colSpan={5} className="p-8 text-center text-stone-400">No hay lotes registrados para este insumo.</td></tr>
+                                            ) : (
+                                              sortedBatches.map(batch => {
+                                                const isEditing = editingBatchId === batch.id;
+                                                const originalTotal = Number(batch.initialQuantity) * Number(batch.costPerUnit);
+                                                
+                                                if (isEditing) {
+                                                  return (
+                                                    <tr key={batch.id} className="bg-amber-50/50">
+                                                      <td className="p-4 pl-6 align-top">
+                                                        <p className="font-bold text-sm">{formatDate(batch.createdAt)}</p>
+                                                        <p className="text-xs text-stone-500">{batch.store?.name || "Sin tienda"}</p>
+                                                      </td>
+                                                      <td className="p-4 align-top">
+                                                        <div className="flex flex-col gap-2 items-end">
+                                                          <div className="flex items-center gap-2">
+                                                            <span className="text-[10px] uppercase text-stone-400 font-bold">Disp:</span>
+                                                            <input type="number" step="any" value={editBatchRem} onChange={e => setEditBatchRem(e.target.value)} className="w-20 px-2 py-1 text-sm text-right border border-stone-300 rounded focus:border-amber-500 outline-none" />
+                                                          </div>
+                                                          <div className="flex items-center gap-2">
+                                                            <span className="text-[10px] uppercase text-stone-400 font-bold">Inic:</span>
+                                                            <input type="number" step="any" value={editBatchQty} onChange={e => setEditBatchQty(e.target.value)} className="w-20 px-2 py-1 text-sm text-right border border-stone-300 rounded focus:border-amber-500 outline-none" />
+                                                          </div>
+                                                        </div>
+                                                      </td>
+                                                      <td className="p-4 align-top text-right text-stone-400">
+                                                        <span className="text-xs">Autocalculado</span>
+                                                      </td>
+                                                      <td className="p-4 align-top text-right pt-5">
+                                                        <input type="number" step="any" value={editBatchTotalPaid} onChange={e => setEditBatchTotalPaid(e.target.value)} className="w-24 px-2 py-1 text-sm text-right border border-stone-300 rounded focus:border-amber-500 outline-none font-bold text-amber-700" />
+                                                      </td>
+                                                      <td className="p-4 pr-6 align-top text-right">
+                                                        <div className="flex justify-end gap-1 pt-1">
+                                                          <button onClick={() => handleSaveBatch(batch.id)} className="p-1.5 bg-emerald-100 text-emerald-700 rounded hover:bg-emerald-200">
+                                                            <CheckCircle2 size={16} />
+                                                          </button>
+                                                          <button onClick={cancelEditingBatch} className="p-1.5 bg-stone-200 text-stone-700 rounded hover:bg-stone-300">
+                                                            <X size={16} />
+                                                          </button>
+                                                        </div>
+                                                      </td>
+                                                    </tr>
+                                                  );
+                                                }
+
+                                                return (
+                                                  <tr key={batch.id} className="hover:bg-stone-50 transition-colors">
+                                                    <td className="p-4 pl-6">
+                                                      <p className="font-bold text-stone-800 text-sm">{formatDate(batch.createdAt)}</p>
+                                                      <p className="text-xs text-stone-500">{batch.store?.name || "Sin tienda registrada"}</p>
+                                                    </td>
+                                                    <td className="p-4 text-right">
+                                                      <span className={`text-sm font-black mr-1 ${Number(batch.remainingQuantity) <= 0 ? 'text-red-500' : 'text-stone-700'}`}>
+                                                        {Number(batch.remainingQuantity).toFixed(2)}
+                                                      </span>
+                                                      <span className="text-xs text-stone-400">/ {Number(batch.initialQuantity).toFixed(2)} {supply.unit}</span>
+                                                    </td>
+                                                    <td className="p-4 text-right text-stone-600 font-medium text-sm">
+                                                      {formatCurrency(Number(batch.costPerUnit))}
+                                                    </td>
+                                                    <td className="p-4 text-right">
+                                                      <span className="text-sm font-bold text-amber-700 bg-amber-50 px-2 py-1 rounded-md">
+                                                        {formatCurrency(originalTotal)}
+                                                      </span>
+                                                    </td>
+                                                    <td className="p-4 pr-6 text-right">
+                                                      <div className="flex items-center justify-end gap-2">
+                                                        <button onClick={() => startEditingBatch(batch)} className="p-1.5 text-stone-400 hover:text-amber-600 rounded transition-colors">
+                                                          <Edit2 size={16} />
+                                                        </button>
+                                                        <button onClick={() => handleDeleteBatch(batch.id)} className="p-1.5 text-stone-400 hover:text-red-600 rounded transition-colors">
+                                                          <Trash2 size={16} />
+                                                        </button>
+                                                      </div>
+                                                    </td>
+                                                  </tr>
+                                                );
+                                              })
+                                            )}
+                                          </tbody>
+                                        </table>
+                                      </div>
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </React.Fragment>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* TAB 2: STORES */}
+        {activeTab === "stores" && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="md:col-span-1">
+              <div className="bg-white p-6 rounded-2xl border border-stone-200/80 shadow-sm sticky top-24">
+                <h3 className="font-bold text-stone-800 mb-4 flex items-center gap-2">
+                  <StoreIcon className="text-amber-600" size={20} />
+                  Nuevo Proveedor
+                </h3>
+                <form onSubmit={handleCreateStore} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-stone-500 mb-1">Nombre *</label>
+                    <input 
+                      type="text" required
+                      value={newStoreName}
+                      onChange={e => setNewStoreName(e.target.value)}
+                      placeholder="Ej. Distribuidora XYZ"
+                      className="w-full px-4 py-2 bg-stone-50 border border-stone-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-stone-500 mb-1">Teléfono</label>
+                    <input 
+                      type="text"
+                      value={newStorePhone}
+                      onChange={e => setNewStorePhone(e.target.value)}
+                      placeholder="Ej. +58 414 1234567"
+                      className="w-full px-4 py-2 bg-stone-50 border border-stone-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-stone-500 mb-1">Dirección</label>
+                    <input 
+                      type="text"
+                      value={newStoreAddress}
+                      onChange={e => setNewStoreAddress(e.target.value)}
+                      placeholder="Ej. Calle 123, Local 4"
+                      className="w-full px-4 py-2 bg-stone-50 border border-stone-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-stone-500 mb-1">Instagram URL</label>
+                    <input 
+                      type="url"
+                      value={newStoreIg}
+                      onChange={e => setNewStoreIg(e.target.value)}
+                      placeholder="https://instagram.com/..."
+                      className="w-full px-4 py-2 bg-stone-50 border border-stone-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-stone-500 mb-1">Google Maps URL</label>
+                    <input 
+                      type="url"
+                      value={newStoreMaps}
+                      onChange={e => setNewStoreMaps(e.target.value)}
+                      placeholder="https://maps.google.com/..."
+                      className="w-full px-4 py-2 bg-stone-50 border border-stone-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
+                    />
+                  </div>
+                  <button 
+                    type="submit" disabled={isSubmitting}
+                    className="w-full py-2.5 bg-stone-900 hover:bg-stone-800 text-white font-bold rounded-xl shadow-lg shadow-stone-900/20 disabled:opacity-50 mt-2"
+                  >
+                    {isSubmitting ? "Guardando..." : "Crear Proveedor"}
+                  </button>
+                </form>
+              </div>
+            </div>
+            
+            <div className="md:col-span-2 space-y-4">
+              {stores.length === 0 ? (
+                <div className="bg-white rounded-2xl border border-stone-200/60 p-12 text-center text-stone-500">
+                  <StoreIcon size={48} className="mx-auto mb-4 text-stone-300" />
+                  <p className="text-sm">Aún no tienes proveedores registrados.</p>
+                </div>
+              ) : (
+                stores.map(store => (
+                  <div key={store.id} className="bg-white p-5 rounded-2xl border border-stone-200/80 shadow-sm flex items-start justify-between group hover:border-amber-200 transition-colors">
+                    <div className="space-y-2 flex-1">
+                      <h4 className="font-bold text-stone-800 text-lg">{store.name}</h4>
                       
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-2 gap-x-4 mt-4 text-sm text-stone-600">
-                        {store.address && (
-                          <div className="flex items-center gap-2">
-                            <MapPin size={16} className="text-stone-400" />
-                            <span>{store.address}</span>
-                          </div>
-                        )}
+                      <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
                         {store.phone && (
-                          <div className="flex items-center gap-2">
-                            <Phone size={16} className="text-stone-400" />
+                          <div className="flex items-center gap-1.5 text-stone-600">
+                            <span className="font-semibold text-[10px] uppercase tracking-widest text-stone-400">Telf:</span>
                             <span>{store.phone}</span>
                           </div>
                         )}
-                        {store.instagramUrl && (
-                          <div className="flex items-center gap-2">
-                            <Camera size={16} className="text-stone-400" />
-                            <a href={store.instagramUrl} target="_blank" rel="noopener noreferrer" className="text-amber-600 hover:underline truncate">
-                              Instagram
-                            </a>
+                        {store.address && (
+                          <div className="flex items-center gap-1.5 text-stone-600">
+                            <span className="font-semibold text-[10px] uppercase tracking-widest text-stone-400">Dir:</span>
+                            <span>{store.address}</span>
                           </div>
                         )}
-                        {store.mapsUrl && (
-                          <div className="flex items-center gap-2">
-                            <Map size={16} className="text-stone-400" />
-                            <a href={store.mapsUrl} target="_blank" rel="noopener noreferrer" className="text-amber-600 hover:underline truncate">
-                              Ver en Google Maps
-                            </a>
+                        {(store.instagramUrl || store.mapsUrl) && (
+                          <div className="flex items-center gap-3">
+                            {store.instagramUrl && (
+                              <a href={store.instagramUrl} target="_blank" rel="noopener noreferrer" className="text-amber-600 hover:text-amber-700 font-medium text-xs underline underline-offset-2">Instagram</a>
+                            )}
+                            {store.mapsUrl && (
+                              <a href={store.mapsUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-700 font-medium text-xs underline underline-offset-2">Ver en Maps</a>
+                            )}
                           </div>
                         )}
                       </div>
                     </div>
-
-                    <div className="sm:w-1/3 bg-stone-50 rounded-xl p-4 border border-stone-100">
-                      <h4 className="text-xs font-semibold text-stone-500 uppercase tracking-wider mb-2">Insumos Adquiridos</h4>
-                      {uniqueProducts.length > 0 ? (
-                        <div className="flex flex-wrap gap-2">
-                          {uniqueProducts.map((p, i) => (
-                            <span key={i} className="px-2 py-1 bg-white border border-stone-200 text-stone-600 rounded text-xs">
-                              {p}
-                            </span>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-xs text-stone-400 italic">No hay lotes asociados aún.</p>
-                      )}
-                    </div>
+                    <button onClick={() => handleDeleteStore(store.id)} className="p-2 text-stone-300 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors ml-4 shrink-0">
+                      <Trash2 size={20} />
+                    </button>
                   </div>
-                );
-              })
-            )}
+                ))
+              )}
+            </div>
           </div>
-          
-          <div className="bg-white rounded-2xl shadow-sm border border-stone-200/60 p-6 h-fit sticky top-6">
-            <h3 className="text-lg font-semibold text-stone-800 mb-4 flex items-center gap-2">
-              <Plus size={20} className="text-amber-600" />
-              Nueva Tienda
-            </h3>
-            <form onSubmit={handleCreateStore} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-stone-700 mb-1">Nombre *</label>
-                <input
-                  type="text"
-                  required
-                  value={storeName}
-                  onChange={(e) => setStoreName(e.target.value)}
-                  placeholder="Ej. Distribuidora Táchira"
-                  className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-colors text-stone-800 bg-stone-50"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-stone-700 mb-1">Dirección <span className="text-stone-400 font-normal">(opcional)</span></label>
-                <input
-                  type="text"
-                  value={storeAddress}
-                  onChange={(e) => setStoreAddress(e.target.value)}
-                  placeholder="Calle principal #123"
-                  className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-colors text-stone-800 bg-stone-50"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-stone-700 mb-1">Teléfono <span className="text-stone-400 font-normal">(opcional)</span></label>
-                <input
-                  type="text"
-                  value={storePhone}
-                  onChange={(e) => setStorePhone(e.target.value)}
-                  placeholder="+56 9 1234 5678"
-                  className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-colors text-stone-800 bg-stone-50"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-stone-700 mb-1">URL Instagram <span className="text-stone-400 font-normal">(opcional)</span></label>
-                <input
-                  type="url"
-                  value={storeInsta}
-                  onChange={(e) => setStoreInsta(e.target.value)}
-                  placeholder="https://instagram.com/..."
-                  className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-colors text-stone-800 bg-stone-50"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-stone-700 mb-1">URL Google Maps <span className="text-stone-400 font-normal">(opcional)</span></label>
-                <input
-                  type="url"
-                  value={storeMaps}
-                  onChange={(e) => setStoreMaps(e.target.value)}
-                  placeholder="https://maps.google.com/..."
-                  className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-colors text-stone-800 bg-stone-50"
-                />
-              </div>
-              <button
-                type="submit"
-                disabled={saving}
-                className="w-full flex justify-center items-center gap-2 py-3 px-4 mt-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-stone-50 bg-stone-800 hover:bg-stone-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-stone-800 transition-colors disabled:opacity-70 disabled:cursor-not-allowed"
-              >
-                {saving ? <div className="w-4 h-4 border-2 border-stone-50 border-t-transparent rounded-full animate-spin" /> : null}
-                Guardar Proveedor
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
+        )}
+      </div>
 
-      {/* Side Panel for Supplies (New/Edit) */}
-      {sidePanelMode !== null && (
-        <div className="fixed inset-0 z-50 flex justify-end">
-          <div className="absolute inset-0 bg-stone-900/40 backdrop-blur-sm" onClick={closePanel}></div>
-          <div className="relative w-full max-w-md h-full bg-stone-50 shadow-2xl flex flex-col transform transition-transform duration-300">
-            <div className="p-6 border-b border-stone-200 bg-white flex justify-between items-center shadow-sm z-10">
-              <div>
-                <h3 className="text-xl font-bold text-stone-800">
-                  {sidePanelMode === "NEW" ? "Nuevo Insumo" : "Ajustes de Insumo"}
-                </h3>
-                {sidePanelMode !== "NEW" && (
-                  <p className="text-sm text-stone-500">{(sidePanelMode as Supply).name} ({(sidePanelMode as Supply).unit})</p>
-                )}
-              </div>
-              <button onClick={closePanel} className="p-2 text-stone-400 hover:text-stone-700 bg-stone-100 hover:bg-stone-200 rounded-lg transition-colors">
+      {/* INVOICE REGISTRATION PANEL */}
+      {invoicePanelOpen && (
+        <div className="fixed inset-0 z-40 flex justify-end">
+          <div className="absolute inset-0 bg-stone-900/40 backdrop-blur-sm" onClick={() => setInvoicePanelOpen(false)}></div>
+          <div className="relative w-full max-w-2xl bg-stone-50 h-full flex flex-col shadow-2xl animate-in slide-in-from-right duration-300">
+            
+            <div className="flex justify-between items-center px-6 py-5 bg-white border-b border-stone-200">
+              <h2 className="text-xl font-bold text-stone-800 flex items-center gap-2">
+                <ShoppingCart className="text-amber-600" size={24} />
+                Registrar Factura
+              </h2>
+              <button onClick={() => setInvoicePanelOpen(false)} className="p-2 text-stone-400 hover:text-stone-700 hover:bg-stone-100 rounded-lg transition-colors">
                 <X size={20} />
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto">
-              {error && (
-                <div className="m-6 p-4 bg-red-50 border border-red-200 text-red-700 rounded-lg flex items-center gap-2">
-                  <span>{error}</span>
+            <div className="flex-1 overflow-y-auto p-6 space-y-8">
+              
+              <div className="bg-white p-5 rounded-2xl border border-stone-200 shadow-sm space-y-4">
+                <h3 className="text-sm font-bold uppercase tracking-widest text-stone-400 mb-2">Datos del Comprobante</h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-stone-500 mb-1">Proveedor / Tienda</label>
+                    <select 
+                      value={invoiceStoreId} 
+                      onChange={e => setInvoiceStoreId(e.target.value)}
+                      className="w-full px-4 py-2.5 bg-stone-50 border border-stone-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
+                    >
+                      <option value="">Seleccionar tienda...</option>
+                      {stores.map(st => <option key={st.id} value={st.id}>{st.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-stone-500 mb-1">Fecha de Compra</label>
+                    <div className="relative">
+                      <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" size={16} />
+                      <input 
+                        type="date"
+                        value={invoiceDate}
+                        onChange={e => setInvoiceDate(e.target.value)}
+                        className="w-full pl-10 pr-4 py-2.5 bg-stone-50 border border-stone-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
+                      />
+                    </div>
+                  </div>
                 </div>
-              )}
+              </div>
 
-              {sidePanelMode === "NEW" ? (
-                // CREATE MODE
-                <form onSubmit={handleCreateSupply} className="p-6 space-y-6">
-                  <div className="bg-white p-5 rounded-xl border border-stone-200 shadow-sm space-y-4">
-                    <h4 className="font-semibold text-stone-800 border-b border-stone-100 pb-2">Datos Básicos</h4>
-                    <div>
-                      <label className="block text-sm font-medium text-stone-700 mb-1">Nombre</label>
-                      <input
-                        type="text"
-                        required
-                        value={supplyName}
-                        onChange={(e) => setSupplyName(e.target.value)}
-                        placeholder="Ej. Harina de Trigo"
-                        className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-colors text-stone-800 bg-stone-50"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-stone-700 mb-1">Unidad base (para recetas)</label>
-                      <select
-                        value={supplyUnit}
-                        onChange={(e) => setSupplyUnit(e.target.value)}
-                        className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-colors text-stone-800 bg-stone-50"
-                      >
-                        <option value="g">Gramos (g)</option>
-                        <option value="kg">Kilogramos (kg)</option>
-                        <option value="ml">Mililitros (ml)</option>
-                        <option value="l">Litros (l)</option>
-                        <option value="un">Unidades (un)</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="bg-white p-5 rounded-xl border border-stone-200 shadow-sm space-y-4">
-                    <h4 className="font-semibold text-stone-800 border-b border-stone-100 pb-2">Inventario Inicial <span className="text-xs font-normal text-stone-400 ml-1">(Opcional)</span></h4>
-                    <p className="text-xs text-stone-500 leading-relaxed mb-4">Puedes registrar el primer lote de una vez o dejarlo en 0 y registrar facturas más tarde.</p>
-                    <div>
-                      <label className="block text-sm font-medium text-stone-700 mb-1">Cantidad Inicial ({supplyUnit})</label>
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={supplyInitQty}
-                        onChange={(e) => setSupplyInitQty(e.target.value)}
-                        placeholder="Ej. 1000"
-                        className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-colors text-stone-800 bg-stone-50"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-stone-700 mb-1">Costo Total Pagado ($)</label>
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={supplyTotalPaid}
-                        onChange={(e) => setSupplyTotalPaid(e.target.value)}
-                        placeholder="Ej. 15.00"
-                        className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-colors text-stone-800 bg-stone-50"
-                      />
-                    </div>
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={saving}
-                    className="w-full flex justify-center items-center gap-2 px-4 py-3 text-sm font-medium text-stone-50 bg-stone-800 hover:bg-stone-900 rounded-lg transition-colors disabled:opacity-70 shadow-sm"
-                  >
-                    {saving ? <div className="w-4 h-4 border-2 border-stone-50 border-t-transparent rounded-full animate-spin" /> : <Save size={18} />}
-                    Crear Insumo
+              <div>
+                <div className="flex justify-between items-end mb-4">
+                  <h3 className="text-sm font-bold uppercase tracking-widest text-stone-400">Detalle de Insumos</h3>
+                  <button onClick={addInvoiceRow} className="text-xs font-bold text-amber-600 hover:text-amber-700 flex items-center gap-1 bg-amber-50 px-3 py-1.5 rounded-lg transition-colors">
+                    <Plus size={14} /> Añadir Fila
                   </button>
-                </form>
-              ) : (
-                // EDIT MODE
-                <div className="flex flex-col h-full">
-                  <div className="flex px-6 pt-4 bg-white border-b border-stone-200">
-                    <button
-                      onClick={() => setPanelTab("DETAILS")}
-                      className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${panelTab === "DETAILS" ? "border-amber-500 text-amber-600" : "border-transparent text-stone-500 hover:text-stone-700"}`}
-                    >
-                      Básico
-                    </button>
-                    <button
-                      onClick={() => setPanelTab("CONVERSIONS")}
-                      className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${panelTab === "CONVERSIONS" ? "border-amber-500 text-amber-600" : "border-transparent text-stone-500 hover:text-stone-700"}`}
-                    >
-                      Conversiones
-                    </button>
-                    <button
-                      onClick={() => setPanelTab("FORMATS")}
-                      className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${panelTab === "FORMATS" ? "border-amber-500 text-amber-600" : "border-transparent text-stone-500 hover:text-stone-700"}`}
-                    >
-                      Formatos
-                    </button>
-                  </div>
-
-                  <div className="p-6">
-                    {panelTab === "DETAILS" && (
-                      <form onSubmit={handleUpdateSupplyName} className="bg-white p-5 rounded-xl border border-stone-200 shadow-sm space-y-4">
-                        <h4 className="font-semibold text-stone-800 border-b border-stone-100 pb-2">Actualizar Nombre</h4>
+                </div>
+                
+                <div className="space-y-3">
+                  {invoiceRows.map((row, idx) => (
+                    <div key={idx} className="bg-white p-4 rounded-xl border border-stone-200 shadow-sm flex items-start gap-3">
+                      <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-3">
                         <div>
-                          <label className="block text-sm font-medium text-stone-700 mb-1">Nombre</label>
-                          <input
-                            type="text"
-                            required
-                            value={editSupplyName}
-                            onChange={(e) => setEditSupplyName(e.target.value)}
-                            className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-colors text-stone-800 bg-stone-50"
+                          <label className="block text-[10px] font-bold text-stone-400 uppercase mb-1">Insumo</label>
+                          <select 
+                            value={row.supplyId} 
+                            onChange={e => updateInvoiceRow(idx, "supplyId", e.target.value)}
+                            className="w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-lg text-sm font-medium focus:outline-none focus:border-amber-500"
+                          >
+                            <option value="">Seleccionar...</option>
+                            {Object.keys(groupedSupplies).map(cat => (
+                              <optgroup key={cat} label={cat}>
+                                {groupedSupplies[cat].map(s => (
+                                  <option key={s.id} value={s.id}>{s.name} ({s.unit})</option>
+                                ))}
+                              </optgroup>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-stone-400 uppercase mb-1">Cant. Comprada</label>
+                          <input 
+                            type="number" min="0" step="any"
+                            value={row.quantity} 
+                            onChange={e => updateInvoiceRow(idx, "quantity", e.target.value)}
+                            placeholder="Ej. 1000"
+                            className="w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-lg text-sm font-medium focus:outline-none focus:border-amber-500"
                           />
                         </div>
-                        <button
-                          type="submit"
-                          disabled={saving || editSupplyName === (sidePanelMode as Supply).name}
-                          className="w-full flex justify-center items-center gap-2 px-4 py-2.5 text-sm font-medium text-stone-50 bg-stone-800 hover:bg-stone-900 rounded-lg transition-colors disabled:opacity-50 shadow-sm"
-                        >
-                          {saving ? <div className="w-4 h-4 border-2 border-stone-50 border-t-transparent rounded-full animate-spin" /> : <Save size={16} />}
-                          Guardar Cambios
-                        </button>
-                      </form>
-                    )}
-
-                    {panelTab === "CONVERSIONS" && (
-                      <div className="space-y-6">
-                        <div className="bg-white p-5 rounded-xl border border-stone-200 shadow-sm">
-                          <h4 className="font-semibold text-stone-800 border-b border-stone-100 pb-2 mb-4">Nueva Conversión</h4>
-                          <form onSubmit={handleAddConversion} className="space-y-4">
-                            <div className="grid grid-cols-2 gap-3">
-                              <div>
-                                <label className="block text-xs font-medium text-stone-500 mb-1 uppercase tracking-wider">Unidad/Nombre</label>
-                                <input
-                                  type="text"
-                                  required
-                                  value={convName}
-                                  onChange={(e) => setConvName(e.target.value)}
-                                  placeholder="Ej. Cucharada"
-                                  className="w-full px-3 py-2 border border-stone-200 rounded-md focus:ring-1 focus:ring-amber-500 outline-none text-stone-800 bg-stone-50 text-sm"
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-xs font-medium text-stone-500 mb-1 uppercase tracking-wider">Factor a {(sidePanelMode as Supply).unit}</label>
-                                <input
-                                  type="number"
-                                  required
-                                  min="0.001"
-                                  step="0.001"
-                                  value={convFactor}
-                                  onChange={(e) => setConvFactor(e.target.value)}
-                                  placeholder="Ej. 15"
-                                  className="w-full px-3 py-2 border border-stone-200 rounded-md focus:ring-1 focus:ring-amber-500 outline-none text-stone-800 bg-stone-50 text-sm"
-                                />
-                              </div>
-                            </div>
-                            <button
-                              type="submit"
-                              disabled={saving}
-                              className="w-full flex justify-center items-center gap-2 px-4 py-2 text-sm font-medium text-amber-800 bg-amber-100 hover:bg-amber-200 rounded-md transition-colors disabled:opacity-50"
-                            >
-                              <Plus size={16} /> Agregar
-                            </button>
-                          </form>
-                        </div>
-
-                        <div className="bg-white rounded-xl border border-stone-200 shadow-sm overflow-hidden">
-                          <table className="w-full text-left text-sm">
-                            <thead className="bg-stone-50 border-b border-stone-100">
-                              <tr>
-                                <th className="p-3 font-medium text-stone-600">Unidad</th>
-                                <th className="p-3 font-medium text-stone-600">Equivale a</th>
-                                <th className="p-3"></th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-stone-100">
-                              {((sidePanelMode as Supply).unitConversions || []).length === 0 ? (
-                                <tr>
-                                  <td colSpan={3} className="p-4 text-center text-stone-500 italic">No hay conversiones</td>
-                                </tr>
-                              ) : (
-                                ((sidePanelMode as Supply).unitConversions || []).map(conv => (
-                                  <tr key={conv.id} className="hover:bg-stone-50/50">
-                                    <td className="p-3 font-medium text-stone-800">{conv.name}</td>
-                                    <td className="p-3 text-stone-600">{conv.factor} {(sidePanelMode as Supply).unit}</td>
-                                    <td className="p-3 text-right">
-                                      <button
-                                        onClick={() => handleRemoveConversion(conv.id)}
-                                        className="p-1.5 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
-                                      >
-                                        <Trash2 size={16} />
-                                      </button>
-                                    </td>
-                                  </tr>
-                                ))
-                              )}
-                            </tbody>
-                          </table>
+                        <div>
+                          <label className="block text-[10px] font-bold text-stone-400 uppercase mb-1">Costo Total ($)</label>
+                          <div className="relative">
+                            <DollarSign className="absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-400" size={14} />
+                            <input 
+                              type="number" min="0" step="any"
+                              value={row.totalCost} 
+                              onChange={e => updateInvoiceRow(idx, "totalCost", e.target.value)}
+                              placeholder="0.00"
+                              className="w-full pl-8 pr-3 py-2 bg-stone-50 border border-stone-200 rounded-lg text-sm font-medium focus:outline-none focus:border-amber-500"
+                            />
+                          </div>
                         </div>
                       </div>
-                    )}
-
-                    {panelTab === "FORMATS" && (
-                      <div className="space-y-6">
-                        <div className="bg-white p-5 rounded-xl border border-stone-200 shadow-sm">
-                          <h4 className="font-semibold text-stone-800 border-b border-stone-100 pb-2 mb-4">Nuevo Formato de Compra</h4>
-                          <form onSubmit={handleAddFormat} className="space-y-4">
-                            <div className="grid grid-cols-2 gap-3">
-                              <div>
-                                <label className="block text-xs font-medium text-stone-500 mb-1 uppercase tracking-wider">Nombre del Formato</label>
-                                <input
-                                  type="text"
-                                  required
-                                  value={formatName}
-                                  onChange={(e) => setFormatName(e.target.value)}
-                                  placeholder="Ej. Saco 50Kg"
-                                  className="w-full px-3 py-2 border border-stone-200 rounded-md focus:ring-1 focus:ring-amber-500 outline-none text-stone-800 bg-stone-50 text-sm"
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-xs font-medium text-stone-500 mb-1 uppercase tracking-wider">Cant Total ({(sidePanelMode as Supply).unit})</label>
-                                <input
-                                  type="number"
-                                  required
-                                  min="0.01"
-                                  step="0.01"
-                                  value={formatQty}
-                                  onChange={(e) => setFormatQty(e.target.value)}
-                                  placeholder="Ej. 50000"
-                                  className="w-full px-3 py-2 border border-stone-200 rounded-md focus:ring-1 focus:ring-amber-500 outline-none text-stone-800 bg-stone-50 text-sm"
-                                />
-                              </div>
-                            </div>
-                            <button
-                              type="submit"
-                              disabled={saving}
-                              className="w-full flex justify-center items-center gap-2 px-4 py-2 text-sm font-medium text-amber-800 bg-amber-100 hover:bg-amber-200 rounded-md transition-colors disabled:opacity-50"
-                            >
-                              <Plus size={16} /> Guardar Formato
-                            </button>
-                          </form>
-                        </div>
-
-                        <div className="bg-white rounded-xl border border-stone-200 shadow-sm overflow-hidden">
-                          <table className="w-full text-left text-sm">
-                            <thead className="bg-stone-50 border-b border-stone-100">
-                              <tr>
-                                <th className="p-3 font-medium text-stone-600">Formato</th>
-                                <th className="p-3 font-medium text-stone-600">Rinde</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-stone-100">
-                              {((sidePanelMode as Supply).formats || []).length === 0 ? (
-                                <tr>
-                                  <td colSpan={2} className="p-4 text-center text-stone-500 italic">No hay formatos de compra guardados</td>
-                                </tr>
-                              ) : (
-                                ((sidePanelMode as Supply).formats || []).map(format => (
-                                  <tr key={format.id} className="hover:bg-stone-50/50">
-                                    <td className="p-3 font-medium text-stone-800">{format.name}</td>
-                                    <td className="p-3 text-stone-600">{format.quantity} {(sidePanelMode as Supply).unit}</td>
-                                  </tr>
-                                ))
-                              )}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                      <button onClick={() => removeInvoiceRow(idx)} disabled={invoiceRows.length === 1} className="p-2 text-stone-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors mt-5 disabled:opacity-50">
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  ))}
                 </div>
-              )}
+              </div>
+
+            </div>
+            
+            <div className="p-6 bg-white border-t border-stone-200">
+              <button 
+                onClick={handleInvoiceSubmit}
+                disabled={isSubmitting}
+                className="w-full py-3.5 bg-stone-900 hover:bg-stone-800 text-white font-bold rounded-xl shadow-lg shadow-stone-900/20 disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {isSubmitting ? "Procesando..." : "Guardar Factura"}
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+
+
+      {/* EDIT SUPPLY PANEL */}
+      {editSupplyPanel && (
+        <div className="fixed inset-0 z-40 flex justify-end">
+          <div className="absolute inset-0 bg-stone-900/20 backdrop-blur-sm" onClick={() => setEditSupplyPanel(null)}></div>
+          <div className="relative w-full max-w-md bg-stone-50 h-full flex flex-col shadow-2xl animate-in slide-in-from-right duration-300">
+            
+            <div className="flex justify-between items-center px-6 py-5 bg-white border-b border-stone-200">
+              <h2 className="text-xl font-bold text-stone-800">Editar Insumo</h2>
+              <button onClick={() => setEditSupplyPanel(null)} className="p-2 text-stone-400 hover:text-stone-700 hover:bg-stone-100 rounded-lg transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveSupply} className="flex-1 overflow-y-auto p-6 space-y-5">
+              <div>
+                <label className="block text-xs font-semibold text-stone-500 mb-1 uppercase tracking-wider">Nombre del Insumo</label>
+                <input 
+                  type="text" required
+                  value={editSupplyNameLocal} 
+                  onChange={e => setEditSupplyNameLocal(e.target.value)}
+                  className="w-full px-4 py-3 bg-white border border-stone-200 rounded-xl text-stone-800 font-medium focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-stone-500 mb-1 uppercase tracking-wider">Unidad Base</label>
+                <input 
+                  type="text" disabled
+                  value={editSupplyPanel.unit} 
+                  className="w-full px-4 py-3 bg-stone-100 border border-stone-200 rounded-xl text-stone-500 font-medium cursor-not-allowed"
+                />
+                <p className="text-[10px] text-stone-400 mt-1">La unidad base no se puede cambiar por integridad de inventario.</p>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-stone-500 mb-1 uppercase tracking-wider">Categoría</label>
+                <select 
+                  value={isNewCatCustom ? "custom" : editSupplyCat} 
+                  onChange={e => {
+                    if (e.target.value === "custom") {
+                      setIsNewCatCustom(true);
+                      setEditSupplyCat("");
+                    } else {
+                      setIsNewCatCustom(false);
+                      setEditSupplyCat(e.target.value);
+                    }
+                  }}
+                  className="w-full px-4 py-3 bg-white border border-stone-200 rounded-xl text-stone-800 font-medium focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
+                >
+                  <option value="">Seleccionar categoría...</option>
+                  {allCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                  <option value="custom">+ Agregar Nueva Categoría</option>
+                </select>
+                {isNewCatCustom && (
+                  <input 
+                    type="text" required
+                    value={editSupplyCat} 
+                    onChange={e => setEditSupplyCat(e.target.value)}
+                    placeholder="Escribe la nueva categoría..."
+                    className="w-full mt-2 px-4 py-3 bg-white border border-stone-200 rounded-xl text-stone-800 font-medium focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
+                  />
+                )}
+              </div>
+            </form>
+            
+            <div className="p-6 bg-white border-t border-stone-200">
+              <button 
+                onClick={handleSaveSupply}
+                disabled={isSubmitting}
+                className="w-full py-3.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl shadow-lg shadow-amber-600/20 disabled:opacity-50"
+              >
+                {isSubmitting ? "Guardando..." : "Guardar Cambios"}
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Modal: New Batch */}
-      {selectedSupplyForBatch && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-stone-900/50 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden border border-stone-200">
-            <div className="px-6 py-4 border-b border-stone-100 flex justify-between items-center bg-stone-50/50">
-              <div>
-                <h3 className="text-lg font-semibold text-stone-800">Ingresar Nuevo Lote</h3>
-                <p className="text-sm text-stone-500">{selectedSupplyForBatch.name}</p>
-              </div>
-              <button onClick={() => setSelectedSupplyForBatch(null)} className="text-stone-400 hover:text-stone-600">
+      {/* NEW SUPPLY PANEL */}
+      {newSupplyPanel && (
+        <div className="fixed inset-0 z-40 flex justify-end">
+          <div className="absolute inset-0 bg-stone-900/20 backdrop-blur-sm" onClick={() => setNewSupplyPanel(false)}></div>
+          <div className="relative w-full max-w-md bg-stone-50 h-full flex flex-col shadow-2xl animate-in slide-in-from-right duration-300">
+            
+            <div className="flex justify-between items-center px-6 py-5 bg-white border-b border-stone-200">
+              <h2 className="text-xl font-bold text-stone-800">Nuevo Insumo</h2>
+              <button onClick={() => setNewSupplyPanel(false)} className="p-2 text-stone-400 hover:text-stone-700 hover:bg-stone-100 rounded-lg transition-colors">
                 <X size={20} />
               </button>
             </div>
-            <form onSubmit={handleCreateBatch} className="p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-stone-700 mb-1">
-                    Cantidad ({selectedSupplyForBatch.unit})
-                  </label>
-                  <input
-                    type="number"
-                    required
-                    min="0"
-                    step="0.01"
-                    value={batchQuantity}
-                    onChange={(e) => setBatchQuantity(e.target.value)}
-                    placeholder="Ej. 1000"
-                    className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-colors text-stone-800 bg-stone-50"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-stone-700 mb-1">
-                    Costo unitario ($)
-                  </label>
-                  <input
-                    type="number"
-                    required
-                    min="0"
-                    step="0.01"
-                    value={batchUnitCost}
-                    onChange={(e) => setBatchUnitCost(e.target.value)}
-                    placeholder="Ej. 0.15"
-                    className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-colors text-stone-800 bg-stone-50"
-                  />
-                  <p className="text-[10px] text-stone-500 mt-1">Costo por 1 {selectedSupplyForBatch.unit}</p>
-                </div>
-              </div>
 
+            <form onSubmit={handleCreateSupply} className="flex-1 overflow-y-auto p-6 space-y-5">
               <div>
-                <label className="block text-sm font-medium text-stone-700 mb-1">Proveedor / Tienda</label>
-                <select
-                  required
-                  value={batchStoreId}
-                  onChange={(e) => setBatchStoreId(e.target.value)}
-                  className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-colors text-stone-800 bg-stone-50"
-                >
-                  <option value="" disabled>Selecciona una tienda</option>
-                  {stores.map(store => (
-                    <option key={store.id} value={store.id}>{store.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-stone-700 mb-1">
-                  Fecha de vencimiento <span className="text-stone-400 font-normal">(Opcional)</span>
-                </label>
-                <input
-                  type="date"
-                  value={batchExpiration}
-                  onChange={(e) => setBatchExpiration(e.target.value)}
-                  className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-colors text-stone-800 bg-stone-50"
+                <label className="block text-xs font-semibold text-stone-500 mb-1 uppercase tracking-wider">Nombre del Insumo</label>
+                <input 
+                  type="text" required
+                  value={newSupplyName} 
+                  onChange={e => setNewSupplyName(e.target.value)}
+                  placeholder="Ej. Harina de Trigo"
+                  className="w-full px-4 py-3 bg-white border border-stone-200 rounded-xl text-stone-800 font-medium focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
                 />
               </div>
+              <div>
+                <label className="block text-xs font-semibold text-stone-500 mb-1 uppercase tracking-wider">Categoría</label>
+                <select 
+                  value={isNewCatCustom ? "custom" : newSupplyCat} 
+                  onChange={e => {
+                    if (e.target.value === "custom") {
+                      setIsNewCatCustom(true);
+                      setNewSupplyCat("");
+                    } else {
+                      setIsNewCatCustom(false);
+                      setNewSupplyCat(e.target.value);
+                    }
+                  }}
+                  className="w-full px-4 py-3 bg-white border border-stone-200 rounded-xl text-stone-800 font-medium focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
+                >
+                  <option value="">Seleccionar categoría...</option>
+                  {allCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                  <option value="custom">+ Agregar Nueva Categoría</option>
+                </select>
+                {isNewCatCustom && (
+                  <input 
+                    type="text" required
+                    value={newSupplyCat} 
+                    onChange={e => setNewSupplyCat(e.target.value)}
+                    placeholder="Escribe la nueva categoría..."
+                    className="w-full mt-2 px-4 py-3 bg-white border border-stone-200 rounded-xl text-stone-800 font-medium focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
+                  />
+                )}
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-stone-500 mb-1 uppercase tracking-wider">Unidad Base</label>
+                <select 
+                  value={newSupplyUnit} 
+                  onChange={e => setNewSupplyUnit(e.target.value)}
+                  className="w-full px-4 py-3 bg-white border border-stone-200 rounded-xl text-stone-800 font-medium focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
+                >
+                  <option value="g">Gramos (g)</option>
+                  <option value="ml">Mililitros (ml)</option>
+                  <option value="unidades">Unidades</option>
+                </select>
+                <p className="text-[10px] text-stone-400 mt-1">Elige la unidad más pequeña en la que se usarán tus recetas.</p>
+              </div>
 
-              <div className="pt-4 flex justify-end gap-3 border-t border-stone-100 mt-6">
-                <button
-                  type="button"
-                  onClick={() => setSelectedSupplyForBatch(null)}
-                  className="px-4 py-2 text-sm font-medium text-stone-600 bg-stone-100 hover:bg-stone-200 rounded-lg transition-colors"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-stone-50 bg-stone-800 hover:bg-stone-900 rounded-lg transition-colors disabled:opacity-70"
-                >
-                  {saving ? <div className="w-4 h-4 border-2 border-stone-50 border-t-transparent rounded-full animate-spin" /> : null}
-                  Registrar Lote
-                </button>
+              <div className="pt-4 border-t border-stone-100">
+                <h4 className="font-semibold text-stone-800 mb-1">Inventario Inicial <span className="text-xs font-normal text-stone-400">(Opcional)</span></h4>
+                <p className="text-xs text-stone-500 leading-relaxed mb-4">Puedes registrar el primer lote ahora o dejarlo vacío.</p>
+                
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-stone-500 mb-1">Proveedor / Tienda</label>
+                    <select 
+                      value={newSupplyStoreId} 
+                      onChange={e => setNewSupplyStoreId(e.target.value)}
+                      className="w-full px-4 py-2.5 bg-stone-50 border border-stone-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
+                    >
+                      <option value="">Sin tienda...</option>
+                      {stores.map(st => <option key={st.id} value={st.id}>{st.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-stone-500 mb-1">Cant. Inicial</label>
+                      <input 
+                        type="number" min="0" step="any"
+                        value={newSupplyInitQty} 
+                        onChange={e => setNewSupplyInitQty(e.target.value)}
+                        placeholder="Ej. 1000"
+                        className="w-full px-4 py-2.5 bg-stone-50 border border-stone-200 rounded-xl text-sm font-medium focus:outline-none focus:border-amber-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-stone-500 mb-1">Costo Total ($)</label>
+                      <input 
+                        type="number" min="0" step="any"
+                        value={newSupplyTotalPaid} 
+                        onChange={e => setNewSupplyTotalPaid(e.target.value)}
+                        placeholder="0.00"
+                        className="w-full px-4 py-2.5 bg-stone-50 border border-stone-200 rounded-xl text-sm font-medium focus:outline-none focus:border-amber-500"
+                      />
+                    </div>
+                  </div>
+                </div>
               </div>
             </form>
+            
+            <div className="p-6 bg-white border-t border-stone-200">
+              <button 
+                onClick={handleCreateSupply}
+                disabled={isSubmitting}
+                className="w-full py-3.5 bg-stone-900 hover:bg-stone-800 text-white font-bold rounded-xl shadow-lg shadow-stone-900/20 disabled:opacity-50"
+              >
+                {isSubmitting ? "Creando..." : "Crear Insumo"}
+              </button>
+            </div>
           </div>
         </div>
       )}

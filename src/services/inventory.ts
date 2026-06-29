@@ -36,6 +36,7 @@ export interface Supply {
   id: string | number;
   name: string;
   unit: string;
+  category?: string;
   totalAvailable?: number;
   batches?: Batch[];
   unitConversions?: UnitConversion[];
@@ -48,6 +49,7 @@ export interface CreateBatchPayload {
   quantity: number;
   unitCost: number;
   expirationDate?: string | null;
+  createdAt?: string;
 }
 
 export interface CreateStorePayload {
@@ -61,8 +63,10 @@ export interface CreateStorePayload {
 export interface CreateSupplyPayload {
   name: string;
   unit: string;
+  category?: string;
   initialQuantity?: number;
   totalPaid?: number;
+  storeId?: number;
 }
 
 export interface CreateUnitConversionPayload {
@@ -87,6 +91,12 @@ export const inventoryService = {
       body: JSON.stringify(payload),
     });
   },
+
+  deleteStore: async (id: string | number): Promise<void> => {
+    return apiFetch(`/stores/${id}`, {
+      method: 'DELETE',
+    });
+  },
   
   getSupplies: async (): Promise<Supply[]> => {
     return apiFetch<Supply[]>('/supplies');
@@ -99,7 +109,7 @@ export const inventoryService = {
     });
   },
 
-  updateSupply: async (id: string | number, payload: { name: string }): Promise<Supply> => {
+  updateSupply: async (id: string | number, payload: { name?: string; category?: string; unit?: string }): Promise<Supply> => {
     return apiFetch<Supply>(`/supplies/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(payload),
@@ -107,10 +117,27 @@ export const inventoryService = {
   },
   
   createBatch: async (payload: CreateBatchPayload): Promise<Batch> => {
-    const { supplyId, ...bodyData } = payload;
-    return apiFetch<Batch>(`/supplies/${supplyId}/batches`, {
+    return apiFetch<Batch>(`/supplies/${payload.supplyId}/batches`, {
       method: 'POST',
-      body: JSON.stringify({ ...bodyData, initialQuantity: bodyData.quantity, totalPaid: bodyData.unitCost * bodyData.quantity }),
+      body: JSON.stringify({ 
+        storeId: payload.storeId,
+        initialQuantity: payload.quantity, 
+        totalPaid: payload.unitCost * payload.quantity,
+        ...(payload.createdAt ? { createdAt: payload.createdAt } : {})
+      }),
+    });
+  },
+
+  updateBatch: async (batchId: string | number, payload: { quantity?: number; remainingQuantity?: number; price?: number }): Promise<Batch> => {
+    return apiFetch<Batch>(`/supplies/batches/${batchId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  deleteBatch: async (batchId: string | number): Promise<void> => {
+    return apiFetch(`/supplies/batches/${batchId}`, {
+      method: 'DELETE',
     });
   },
 
