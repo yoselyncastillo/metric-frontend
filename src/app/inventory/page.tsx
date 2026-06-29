@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { inventoryService, Store, Supply } from "@/services/inventory";
+import { inventoryService, Store, Supply, UnitConversion, SupplyFormat } from "@/services/inventory";
 import { 
   Package, 
   Store as StoreIcon, 
@@ -14,7 +14,10 @@ import {
   MapPin,
   Phone,
   Camera,
-  Map
+  Map,
+  Edit2,
+  Trash2,
+  Save
 } from "lucide-react";
 import React from "react";
 
@@ -26,12 +29,32 @@ export default function InventoryPage() {
   const [supplies, setSupplies] = useState<Supply[]>([]);
   const [loadingInit, setLoadingInit] = useState(true);
 
-  // Modals state
-  const [showSupplyModal, setShowSupplyModal] = useState(false);
-  const [selectedSupplyForBatch, setSelectedSupplyForBatch] = useState<Supply | null>(null);
-
   // Accordion state
   const [expandedSupplyId, setExpandedSupplyId] = useState<string | number | null>(null);
+
+  // Side Panel State
+  const [sidePanelMode, setSidePanelMode] = useState<"NEW" | Supply | null>(null);
+  const [panelTab, setPanelTab] = useState<"DETAILS" | "CONVERSIONS" | "FORMATS">("DETAILS");
+
+  // New Supply State
+  const [supplyName, setSupplyName] = useState("");
+  const [supplyUnit, setSupplyUnit] = useState("g");
+  const [supplyInitQty, setSupplyInitQty] = useState("");
+  const [supplyTotalPaid, setSupplyTotalPaid] = useState("");
+
+  // Edit Supply State
+  const [editSupplyName, setEditSupplyName] = useState("");
+  
+  // Conversions State
+  const [convName, setConvName] = useState("");
+  const [convFactor, setConvFactor] = useState("");
+
+  // Formats State
+  const [formatName, setFormatName] = useState("");
+  const [formatQty, setFormatQty] = useState("");
+
+  // Modals state
+  const [selectedSupplyForBatch, setSelectedSupplyForBatch] = useState<Supply | null>(null);
 
   // Store Form states
   const [storeName, setStoreName] = useState("");
@@ -39,10 +62,6 @@ export default function InventoryPage() {
   const [storePhone, setStorePhone] = useState("");
   const [storeInsta, setStoreInsta] = useState("");
   const [storeMaps, setStoreMaps] = useState("");
-
-  // Supply Form states
-  const [supplyName, setSupplyName] = useState("");
-  const [supplyUnit, setSupplyUnit] = useState("g");
   
   // Batch Form states
   const [batchQuantity, setBatchQuantity] = useState("");
@@ -61,6 +80,12 @@ export default function InventoryPage() {
       ]);
       setStores(storesData);
       setSupplies(suppliesData);
+      
+      // Update selected supply in edit mode if needed
+      if (sidePanelMode && sidePanelMode !== "NEW") {
+        const updated = suppliesData.find(s => s.id === (sidePanelMode as Supply).id);
+        if (updated) setSidePanelMode(updated);
+      }
     } catch (err) {
       console.error(err);
     } finally {
@@ -77,6 +102,7 @@ export default function InventoryPage() {
     fetchData();
   }, [router]);
 
+  // --- STORE ACTIONS ---
   const handleCreateStore = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
@@ -103,24 +129,7 @@ export default function InventoryPage() {
     }
   };
 
-  const handleCreateSupply = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
-    setError(null);
-    try {
-      await inventoryService.createSupply(supplyName, supplyUnit);
-      setSupplyName("");
-      setSupplyUnit("g");
-      setShowSupplyModal(false);
-      await fetchData();
-    } catch (err: unknown) {
-      if (err instanceof Error) setError(err.message);
-      else setError("Error al crear el insumo");
-    } finally {
-      setSaving(false);
-    }
-  };
-
+  // --- BATCH ACTIONS ---
   const handleCreateBatch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedSupplyForBatch || !batchStoreId) {
@@ -151,6 +160,121 @@ export default function InventoryPage() {
     }
   };
 
+  // --- PANEL ACTIONS ---
+  const openNewSupplyPanel = () => {
+    setSupplyName("");
+    setSupplyUnit("g");
+    setSupplyInitQty("");
+    setSupplyTotalPaid("");
+    setSidePanelMode("NEW");
+  };
+
+  const openEditSupplyPanel = (supply: Supply) => {
+    setEditSupplyName(supply.name);
+    setPanelTab("DETAILS");
+    setSidePanelMode(supply);
+  };
+
+  const closePanel = () => {
+    setSidePanelMode(null);
+    setError(null);
+  };
+
+  const handleCreateSupply = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    setError(null);
+    try {
+      await inventoryService.createSupply({
+        name: supplyName,
+        unit: supplyUnit,
+        initialQuantity: supplyInitQty ? Number(supplyInitQty) : undefined,
+        totalPaid: supplyTotalPaid ? Number(supplyTotalPaid) : undefined
+      });
+      closePanel();
+      await fetchData();
+    } catch (err: unknown) {
+      if (err instanceof Error) setError(err.message);
+      else setError("Error al crear el insumo");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleUpdateSupplyName = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (sidePanelMode === "NEW" || !sidePanelMode) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await inventoryService.updateSupply(sidePanelMode.id, { name: editSupplyName });
+      await fetchData();
+    } catch (err: unknown) {
+      if (err instanceof Error) setError(err.message);
+      else setError("Error al actualizar el insumo");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleAddConversion = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (sidePanelMode === "NEW" || !sidePanelMode) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await inventoryService.addConversion(sidePanelMode.id, {
+        name: convName,
+        factor: Number(convFactor)
+      });
+      setConvName("");
+      setConvFactor("");
+      await fetchData();
+    } catch (err: unknown) {
+      if (err instanceof Error) setError(err.message);
+      else setError("Error al agregar conversión");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRemoveConversion = async (id: string | number) => {
+    if (!confirm("¿Eliminar esta conversión? Si está siendo usada en recetas, podría fallar.")) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await inventoryService.removeConversion(id);
+      await fetchData();
+    } catch (err: unknown) {
+      if (err instanceof Error) setError(err.message);
+      else setError("Error al eliminar conversión. Verifica que no esté en uso.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleAddFormat = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (sidePanelMode === "NEW" || !sidePanelMode) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await inventoryService.addFormat({
+        name: formatName,
+        quantity: Number(formatQty),
+        supplyId: sidePanelMode.id
+      });
+      setFormatName("");
+      setFormatQty("");
+      await fetchData();
+    } catch (err: unknown) {
+      if (err instanceof Error) setError(err.message);
+      else setError("Error al agregar formato");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const toggleAccordion = (id: string | number) => {
     if (expandedSupplyId === id) setExpandedSupplyId(null);
     else setExpandedSupplyId(id);
@@ -169,13 +293,13 @@ export default function InventoryPage() {
   }
 
   return (
-    <div className="p-8 max-w-7xl mx-auto h-full min-h-screen flex flex-col bg-stone-50">
+    <div className="p-8 max-w-7xl mx-auto h-full min-h-screen flex flex-col bg-stone-50 relative">
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-stone-800 mb-2">Inventario & Lotes</h1>
         <p className="text-stone-500">Gestiona tu materia prima, registra facturas y proveedores.</p>
       </div>
 
-      {error && (
+      {error && !sidePanelMode && (
         <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-700 rounded-lg flex justify-between items-center">
           <span>{error}</span>
           <button onClick={() => setError(null)} className="text-red-700 hover:text-red-900">
@@ -219,7 +343,7 @@ export default function InventoryPage() {
               <p className="text-sm text-stone-500 mt-1">Registra nuevos ingredientes o ingresa lotes a inventario.</p>
             </div>
             <button
-              onClick={() => setShowSupplyModal(true)}
+              onClick={openNewSupplyPanel}
               className="flex items-center gap-2 px-4 py-2 bg-stone-800 text-stone-50 rounded-lg hover:bg-stone-900 transition-colors text-sm font-medium"
             >
               <Plus size={16} />
@@ -272,13 +396,22 @@ export default function InventoryPage() {
                           <span className="text-sm text-stone-500 ml-1">{supply.unit}</span>
                         </td>
                         <td className="p-4 pr-6 text-right">
-                          <button
-                            onClick={() => setSelectedSupplyForBatch(supply)}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-md transition-colors"
-                          >
-                            <Receipt size={14} />
-                            Ingresar Nuevo Lote
-                          </button>
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              onClick={() => openEditSupplyPanel(supply)}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-stone-600 bg-stone-100 hover:bg-stone-200 rounded-md transition-colors"
+                            >
+                              <Edit2 size={14} />
+                              Ajustes
+                            </button>
+                            <button
+                              onClick={() => setSelectedSupplyForBatch(supply)}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-md transition-colors"
+                            >
+                              <Receipt size={14} />
+                              Ingresar Lote
+                            </button>
+                          </div>
                         </td>
                       </tr>
                       {/* Lotes Accordion */}
@@ -290,7 +423,7 @@ export default function InventoryPage() {
                               {supply.batches && supply.batches.length > 0 ? (
                                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                                   {supply.batches.map(batch => (
-                                    <div key={batch.id} className="bg-white border border-stone-200 rounded-lg p-3 text-sm flex flex-col gap-2">
+                                    <div key={batch.id} className="bg-white border border-stone-200 rounded-lg p-3 text-sm flex flex-col gap-2 shadow-sm">
                                       <div className="flex justify-between items-center border-b border-stone-100 pb-2">
                                         <span className="font-medium text-stone-800">Quedan {Number(batch.remainingQuantity).toLocaleString()} {supply.unit}</span>
                                         <span className="text-xs text-stone-400">{new Date(batch.createdAt).toLocaleDateString()}</span>
@@ -335,7 +468,6 @@ export default function InventoryPage() {
               </div>
             ) : (
               stores.map((store) => {
-                // Collect unique product names supplied by this store from batches
                 const uniqueProducts = Array.from(new Set(
                   (store.batches || []).map(b => b.supply?.name).filter(Boolean)
                 ));
@@ -472,71 +604,310 @@ export default function InventoryPage() {
         </div>
       )}
 
-      {/* Modal: New Supply */}
-      {showSupplyModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/50 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden border border-stone-200">
-            <div className="px-6 py-4 border-b border-stone-100 flex justify-between items-center">
-              <h3 className="text-lg font-semibold text-stone-800">Nuevo Insumo</h3>
-              <button onClick={() => setShowSupplyModal(false)} className="text-stone-400 hover:text-stone-600">
+      {/* Side Panel for Supplies (New/Edit) */}
+      {sidePanelMode !== null && (
+        <div className="fixed inset-0 z-50 flex justify-end">
+          <div className="absolute inset-0 bg-stone-900/40 backdrop-blur-sm" onClick={closePanel}></div>
+          <div className="relative w-full max-w-md h-full bg-stone-50 shadow-2xl flex flex-col transform transition-transform duration-300">
+            <div className="p-6 border-b border-stone-200 bg-white flex justify-between items-center shadow-sm z-10">
+              <div>
+                <h3 className="text-xl font-bold text-stone-800">
+                  {sidePanelMode === "NEW" ? "Nuevo Insumo" : "Ajustes de Insumo"}
+                </h3>
+                {sidePanelMode !== "NEW" && (
+                  <p className="text-sm text-stone-500">{(sidePanelMode as Supply).name} ({(sidePanelMode as Supply).unit})</p>
+                )}
+              </div>
+              <button onClick={closePanel} className="p-2 text-stone-400 hover:text-stone-700 bg-stone-100 hover:bg-stone-200 rounded-lg transition-colors">
                 <X size={20} />
               </button>
             </div>
-            <form onSubmit={handleCreateSupply} className="p-6 space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-stone-700 mb-1">Nombre</label>
-                <input
-                  type="text"
-                  required
-                  value={supplyName}
-                  onChange={(e) => setSupplyName(e.target.value)}
-                  placeholder="Ej. Esencia de Vainilla"
-                  className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-colors text-stone-800 bg-stone-50"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-stone-700 mb-1">Unidad de medida</label>
-                <select
-                  value={supplyUnit}
-                  onChange={(e) => setSupplyUnit(e.target.value)}
-                  className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-colors text-stone-800 bg-stone-50"
-                >
-                  <option value="g">Gramos (g)</option>
-                  <option value="kg">Kilogramos (kg)</option>
-                  <option value="ml">Mililitros (ml)</option>
-                  <option value="l">Litros (l)</option>
-                  <option value="un">Unidades (un)</option>
-                </select>
-              </div>
-              <div className="pt-4 flex justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={() => setShowSupplyModal(false)}
-                  className="px-4 py-2 text-sm font-medium text-stone-600 bg-stone-100 hover:bg-stone-200 rounded-lg transition-colors"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-stone-50 bg-stone-800 hover:bg-stone-900 rounded-lg transition-colors disabled:opacity-70"
-                >
-                  {saving ? <div className="w-4 h-4 border-2 border-stone-50 border-t-transparent rounded-full animate-spin" /> : null}
-                  Guardar
-                </button>
-              </div>
-            </form>
+
+            <div className="flex-1 overflow-y-auto">
+              {error && (
+                <div className="m-6 p-4 bg-red-50 border border-red-200 text-red-700 rounded-lg flex items-center gap-2">
+                  <span>{error}</span>
+                </div>
+              )}
+
+              {sidePanelMode === "NEW" ? (
+                // CREATE MODE
+                <form onSubmit={handleCreateSupply} className="p-6 space-y-6">
+                  <div className="bg-white p-5 rounded-xl border border-stone-200 shadow-sm space-y-4">
+                    <h4 className="font-semibold text-stone-800 border-b border-stone-100 pb-2">Datos Básicos</h4>
+                    <div>
+                      <label className="block text-sm font-medium text-stone-700 mb-1">Nombre</label>
+                      <input
+                        type="text"
+                        required
+                        value={supplyName}
+                        onChange={(e) => setSupplyName(e.target.value)}
+                        placeholder="Ej. Harina de Trigo"
+                        className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-colors text-stone-800 bg-stone-50"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-stone-700 mb-1">Unidad base (para recetas)</label>
+                      <select
+                        value={supplyUnit}
+                        onChange={(e) => setSupplyUnit(e.target.value)}
+                        className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-colors text-stone-800 bg-stone-50"
+                      >
+                        <option value="g">Gramos (g)</option>
+                        <option value="kg">Kilogramos (kg)</option>
+                        <option value="ml">Mililitros (ml)</option>
+                        <option value="l">Litros (l)</option>
+                        <option value="un">Unidades (un)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="bg-white p-5 rounded-xl border border-stone-200 shadow-sm space-y-4">
+                    <h4 className="font-semibold text-stone-800 border-b border-stone-100 pb-2">Inventario Inicial <span className="text-xs font-normal text-stone-400 ml-1">(Opcional)</span></h4>
+                    <p className="text-xs text-stone-500 leading-relaxed mb-4">Puedes registrar el primer lote de una vez o dejarlo en 0 y registrar facturas más tarde.</p>
+                    <div>
+                      <label className="block text-sm font-medium text-stone-700 mb-1">Cantidad Inicial ({supplyUnit})</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={supplyInitQty}
+                        onChange={(e) => setSupplyInitQty(e.target.value)}
+                        placeholder="Ej. 1000"
+                        className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-colors text-stone-800 bg-stone-50"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-stone-700 mb-1">Costo Total Pagado ($)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={supplyTotalPaid}
+                        onChange={(e) => setSupplyTotalPaid(e.target.value)}
+                        placeholder="Ej. 15.00"
+                        className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-colors text-stone-800 bg-stone-50"
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={saving}
+                    className="w-full flex justify-center items-center gap-2 px-4 py-3 text-sm font-medium text-stone-50 bg-stone-800 hover:bg-stone-900 rounded-lg transition-colors disabled:opacity-70 shadow-sm"
+                  >
+                    {saving ? <div className="w-4 h-4 border-2 border-stone-50 border-t-transparent rounded-full animate-spin" /> : <Save size={18} />}
+                    Crear Insumo
+                  </button>
+                </form>
+              ) : (
+                // EDIT MODE
+                <div className="flex flex-col h-full">
+                  <div className="flex px-6 pt-4 bg-white border-b border-stone-200">
+                    <button
+                      onClick={() => setPanelTab("DETAILS")}
+                      className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${panelTab === "DETAILS" ? "border-amber-500 text-amber-600" : "border-transparent text-stone-500 hover:text-stone-700"}`}
+                    >
+                      Básico
+                    </button>
+                    <button
+                      onClick={() => setPanelTab("CONVERSIONS")}
+                      className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${panelTab === "CONVERSIONS" ? "border-amber-500 text-amber-600" : "border-transparent text-stone-500 hover:text-stone-700"}`}
+                    >
+                      Conversiones
+                    </button>
+                    <button
+                      onClick={() => setPanelTab("FORMATS")}
+                      className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${panelTab === "FORMATS" ? "border-amber-500 text-amber-600" : "border-transparent text-stone-500 hover:text-stone-700"}`}
+                    >
+                      Formatos
+                    </button>
+                  </div>
+
+                  <div className="p-6">
+                    {panelTab === "DETAILS" && (
+                      <form onSubmit={handleUpdateSupplyName} className="bg-white p-5 rounded-xl border border-stone-200 shadow-sm space-y-4">
+                        <h4 className="font-semibold text-stone-800 border-b border-stone-100 pb-2">Actualizar Nombre</h4>
+                        <div>
+                          <label className="block text-sm font-medium text-stone-700 mb-1">Nombre</label>
+                          <input
+                            type="text"
+                            required
+                            value={editSupplyName}
+                            onChange={(e) => setEditSupplyName(e.target.value)}
+                            className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-colors text-stone-800 bg-stone-50"
+                          />
+                        </div>
+                        <button
+                          type="submit"
+                          disabled={saving || editSupplyName === (sidePanelMode as Supply).name}
+                          className="w-full flex justify-center items-center gap-2 px-4 py-2.5 text-sm font-medium text-stone-50 bg-stone-800 hover:bg-stone-900 rounded-lg transition-colors disabled:opacity-50 shadow-sm"
+                        >
+                          {saving ? <div className="w-4 h-4 border-2 border-stone-50 border-t-transparent rounded-full animate-spin" /> : <Save size={16} />}
+                          Guardar Cambios
+                        </button>
+                      </form>
+                    )}
+
+                    {panelTab === "CONVERSIONS" && (
+                      <div className="space-y-6">
+                        <div className="bg-white p-5 rounded-xl border border-stone-200 shadow-sm">
+                          <h4 className="font-semibold text-stone-800 border-b border-stone-100 pb-2 mb-4">Nueva Conversión</h4>
+                          <form onSubmit={handleAddConversion} className="space-y-4">
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <label className="block text-xs font-medium text-stone-500 mb-1 uppercase tracking-wider">Unidad/Nombre</label>
+                                <input
+                                  type="text"
+                                  required
+                                  value={convName}
+                                  onChange={(e) => setConvName(e.target.value)}
+                                  placeholder="Ej. Cucharada"
+                                  className="w-full px-3 py-2 border border-stone-200 rounded-md focus:ring-1 focus:ring-amber-500 outline-none text-stone-800 bg-stone-50 text-sm"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-medium text-stone-500 mb-1 uppercase tracking-wider">Factor a {(sidePanelMode as Supply).unit}</label>
+                                <input
+                                  type="number"
+                                  required
+                                  min="0.001"
+                                  step="0.001"
+                                  value={convFactor}
+                                  onChange={(e) => setConvFactor(e.target.value)}
+                                  placeholder="Ej. 15"
+                                  className="w-full px-3 py-2 border border-stone-200 rounded-md focus:ring-1 focus:ring-amber-500 outline-none text-stone-800 bg-stone-50 text-sm"
+                                />
+                              </div>
+                            </div>
+                            <button
+                              type="submit"
+                              disabled={saving}
+                              className="w-full flex justify-center items-center gap-2 px-4 py-2 text-sm font-medium text-amber-800 bg-amber-100 hover:bg-amber-200 rounded-md transition-colors disabled:opacity-50"
+                            >
+                              <Plus size={16} /> Agregar
+                            </button>
+                          </form>
+                        </div>
+
+                        <div className="bg-white rounded-xl border border-stone-200 shadow-sm overflow-hidden">
+                          <table className="w-full text-left text-sm">
+                            <thead className="bg-stone-50 border-b border-stone-100">
+                              <tr>
+                                <th className="p-3 font-medium text-stone-600">Unidad</th>
+                                <th className="p-3 font-medium text-stone-600">Equivale a</th>
+                                <th className="p-3"></th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-stone-100">
+                              {((sidePanelMode as Supply).unitConversions || []).length === 0 ? (
+                                <tr>
+                                  <td colSpan={3} className="p-4 text-center text-stone-500 italic">No hay conversiones</td>
+                                </tr>
+                              ) : (
+                                ((sidePanelMode as Supply).unitConversions || []).map(conv => (
+                                  <tr key={conv.id} className="hover:bg-stone-50/50">
+                                    <td className="p-3 font-medium text-stone-800">{conv.name}</td>
+                                    <td className="p-3 text-stone-600">{conv.factor} {(sidePanelMode as Supply).unit}</td>
+                                    <td className="p-3 text-right">
+                                      <button
+                                        onClick={() => handleRemoveConversion(conv.id)}
+                                        className="p-1.5 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                                      >
+                                        <Trash2 size={16} />
+                                      </button>
+                                    </td>
+                                  </tr>
+                                ))
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {panelTab === "FORMATS" && (
+                      <div className="space-y-6">
+                        <div className="bg-white p-5 rounded-xl border border-stone-200 shadow-sm">
+                          <h4 className="font-semibold text-stone-800 border-b border-stone-100 pb-2 mb-4">Nuevo Formato de Compra</h4>
+                          <form onSubmit={handleAddFormat} className="space-y-4">
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <label className="block text-xs font-medium text-stone-500 mb-1 uppercase tracking-wider">Nombre del Formato</label>
+                                <input
+                                  type="text"
+                                  required
+                                  value={formatName}
+                                  onChange={(e) => setFormatName(e.target.value)}
+                                  placeholder="Ej. Saco 50Kg"
+                                  className="w-full px-3 py-2 border border-stone-200 rounded-md focus:ring-1 focus:ring-amber-500 outline-none text-stone-800 bg-stone-50 text-sm"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-medium text-stone-500 mb-1 uppercase tracking-wider">Cant Total ({(sidePanelMode as Supply).unit})</label>
+                                <input
+                                  type="number"
+                                  required
+                                  min="0.01"
+                                  step="0.01"
+                                  value={formatQty}
+                                  onChange={(e) => setFormatQty(e.target.value)}
+                                  placeholder="Ej. 50000"
+                                  className="w-full px-3 py-2 border border-stone-200 rounded-md focus:ring-1 focus:ring-amber-500 outline-none text-stone-800 bg-stone-50 text-sm"
+                                />
+                              </div>
+                            </div>
+                            <button
+                              type="submit"
+                              disabled={saving}
+                              className="w-full flex justify-center items-center gap-2 px-4 py-2 text-sm font-medium text-amber-800 bg-amber-100 hover:bg-amber-200 rounded-md transition-colors disabled:opacity-50"
+                            >
+                              <Plus size={16} /> Guardar Formato
+                            </button>
+                          </form>
+                        </div>
+
+                        <div className="bg-white rounded-xl border border-stone-200 shadow-sm overflow-hidden">
+                          <table className="w-full text-left text-sm">
+                            <thead className="bg-stone-50 border-b border-stone-100">
+                              <tr>
+                                <th className="p-3 font-medium text-stone-600">Formato</th>
+                                <th className="p-3 font-medium text-stone-600">Rinde</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-stone-100">
+                              {((sidePanelMode as Supply).formats || []).length === 0 ? (
+                                <tr>
+                                  <td colSpan={2} className="p-4 text-center text-stone-500 italic">No hay formatos de compra guardados</td>
+                                </tr>
+                              ) : (
+                                ((sidePanelMode as Supply).formats || []).map(format => (
+                                  <tr key={format.id} className="hover:bg-stone-50/50">
+                                    <td className="p-3 font-medium text-stone-800">{format.name}</td>
+                                    <td className="p-3 text-stone-600">{format.quantity} {(sidePanelMode as Supply).unit}</td>
+                                  </tr>
+                                ))
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
 
       {/* Modal: New Batch */}
       {selectedSupplyForBatch && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/50 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-stone-900/50 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden border border-stone-200">
             <div className="px-6 py-4 border-b border-stone-100 flex justify-between items-center bg-stone-50/50">
               <div>
-                <h3 className="text-lg font-semibold text-stone-800">Ingresar Lote / Factura</h3>
+                <h3 className="text-lg font-semibold text-stone-800">Ingresar Nuevo Lote</h3>
                 <p className="text-sm text-stone-500">{selectedSupplyForBatch.name}</p>
               </div>
               <button onClick={() => setSelectedSupplyForBatch(null)} className="text-stone-400 hover:text-stone-600">
