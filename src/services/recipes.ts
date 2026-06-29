@@ -24,6 +24,10 @@ export interface Recipe {
   profitMargin: number | string;
   ingredients: RecipeIngredient[];
   costSummary?: RecipeCostSummary; // Returned by backend if modified
+  category?: string;
+  isIntermediate?: boolean;
+  associatedSupplyId?: number;
+  associatedSupply?: Supply;
 }
 
 export interface CreateRecipeIngredientDto {
@@ -38,6 +42,9 @@ export interface CreateRecipeDto {
   portions: number;
   profitMargin?: number;
   ingredients: CreateRecipeIngredientDto[];
+  category?: string;
+  isIntermediate?: boolean;
+  associatedSupplyId?: number;
 }
 
 export interface PreviewIngredientCost extends CreateRecipeIngredientDto {
@@ -61,10 +68,27 @@ export const recipesService = {
     return apiFetch<Recipe[]>('/recipes');
   },
   
+  getRecipeById: async (id: string | number): Promise<Recipe> => {
+    return apiFetch<Recipe>(`/recipes/${id}`);
+  },
+
   createRecipe: async (payload: CreateRecipeDto): Promise<Recipe> => {
     return apiFetch<Recipe>('/recipes', {
       method: 'POST',
       body: JSON.stringify(payload),
+    });
+  },
+
+  updateRecipe: async (id: string | number, payload: Partial<CreateRecipeDto>): Promise<Recipe> => {
+    return apiFetch<Recipe>(`/recipes/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  deleteRecipe: async (id: string | number): Promise<void> => {
+    return apiFetch(`/recipes/${id}`, {
+      method: 'DELETE',
     });
   },
 

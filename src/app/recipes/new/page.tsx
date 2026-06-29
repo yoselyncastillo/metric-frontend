@@ -25,6 +25,10 @@ export default function NewRecipePage() {
   // Form State
   const [name, setName] = useState("");
   const [portions, setPortions] = useState("1");
+  const [category, setCategory] = useState("");
+  const [isIntermediate, setIsIntermediate] = useState(false);
+  const [associatedSupplyId, setAssociatedSupplyId] = useState("");
+  
   const [ingredients, setIngredients] = useState<CreateRecipeIngredientDto[]>([
     { supplyId: 0, quantity: 1, unit: "" }
   ]);
@@ -49,6 +53,9 @@ export default function NewRecipePage() {
       .finally(() => setLoadingInit(false));
   }, [router]);
 
+  // Extract unique existing categories from existing recipes to suggest them? 
+  // (Optional nice to have, but for now just text input)
+
   // Ingredient interactions
   const addIngredient = () => {
     setIngredients([...ingredients, { supplyId: 0, quantity: 1, unit: "" }]);
@@ -69,7 +76,6 @@ export default function NewRecipePage() {
     setIsDirty(true);
   };
 
-  // Supply selection change logic
   const handleSupplyChange = (index: number, supplyIdStr: string) => {
     const supplyId = Number(supplyIdStr);
     const supply = supplies.find(s => Number(s.id) === supplyId);
@@ -78,7 +84,6 @@ export default function NewRecipePage() {
     newIngs[index] = { 
       ...newIngs[index], 
       supplyId,
-      // Auto-select the base unit of the supply
       unit: supply ? supply.unit : newIngs[index].unit 
     };
     setIngredients(newIngs);
@@ -86,7 +91,6 @@ export default function NewRecipePage() {
   };
 
   const calculateCosts = async () => {
-    // Validate
     const validIngredients = ingredients.filter(i => i.supplyId > 0 && i.quantity > 0 && i.unit !== "");
     if (validIngredients.length === 0) {
       setError("Debes agregar al menos un ingrediente válido para calcular.");
@@ -120,6 +124,11 @@ export default function NewRecipePage() {
       return;
     }
 
+    if (isIntermediate && !associatedSupplyId) {
+      setError("Debes seleccionar a qué insumo alimentará esta receta intermedia.");
+      return;
+    }
+
     setSaving(true);
     setError(null);
     try {
@@ -127,7 +136,10 @@ export default function NewRecipePage() {
         name,
         description: "Sin descripción", 
         portions: Number(portions),
-        ingredients: validIngredients
+        ingredients: validIngredients,
+        category: category.trim() || "Sin Categoría",
+        isIntermediate,
+        ...(isIntermediate && associatedSupplyId ? { associatedSupplyId: Number(associatedSupplyId) } : {})
       });
       router.push("/recipes");
     } catch (err: unknown) {
@@ -200,9 +212,10 @@ export default function NewRecipePage() {
               <div className="bg-white p-6 rounded-2xl border border-stone-200/60 shadow-sm">
                 <h3 className="text-lg font-bold text-stone-800 mb-4 flex items-center gap-2">
                   <span className="w-6 h-6 rounded-md bg-stone-100 flex items-center justify-center text-xs text-stone-500">1</span>
-                  Datos Generales
+                  Configuración General
                 </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
                   <div>
                     <label className="block text-sm font-medium text-stone-700 mb-1.5">Nombre de la Receta</label>
                     <input
@@ -210,23 +223,78 @@ export default function NewRecipePage() {
                       required
                       value={name}
                       onChange={(e) => { setName(e.target.value); setIsDirty(true); }}
-                      placeholder="Ej. Masa para Galletas"
+                      placeholder="Ej. Masa Quebrada"
                       className="w-full px-4 py-2.5 border border-stone-200 rounded-xl focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none text-stone-800 bg-stone-50/50 transition-colors"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-stone-700 mb-1.5">Rendimiento (Porciones)</label>
+                    <label className="block text-sm font-medium text-stone-700 mb-1.5">Rendimiento (Porciones/Cant)</label>
                     <input
                       type="number"
                       required
                       min="1"
+                      step="0.01"
                       value={portions}
                       onChange={(e) => { setPortions(e.target.value); setIsDirty(true); }}
-                      placeholder="Ej. 12"
+                      placeholder="Ej. 1"
                       className="w-full px-4 py-2.5 border border-stone-200 rounded-xl focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none text-stone-800 bg-stone-50/50 transition-colors"
                     />
                   </div>
                 </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5 items-end">
+                  <div>
+                    <label className="block text-sm font-medium text-stone-700 mb-1.5">Categoría de Agrupación</label>
+                    <input
+                      type="text"
+                      value={category}
+                      onChange={(e) => { setCategory(e.target.value); setIsDirty(true); }}
+                      placeholder="Ej. Bases, Vasos 7oz, Rellenos"
+                      className="w-full px-4 py-2.5 border border-stone-200 rounded-xl focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none text-stone-800 bg-stone-50/50 transition-colors"
+                    />
+                  </div>
+                  
+                  <div className="bg-stone-50 p-3 rounded-xl border border-stone-200/80">
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <div className="relative">
+                        <input 
+                          type="checkbox" 
+                          className="sr-only" 
+                          checked={isIntermediate}
+                          onChange={(e) => { setIsIntermediate(e.target.checked); setIsDirty(true); }}
+                        />
+                        <div className={`block w-10 h-6 rounded-full transition-colors ${isIntermediate ? 'bg-amber-500' : 'bg-stone-300'}`}></div>
+                        <div className={`absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform ${isIntermediate ? 'translate-x-4' : ''}`}></div>
+                      </div>
+                      <div>
+                        <p className="text-sm font-bold text-stone-800">¿Es receta intermedia?</p>
+                        <p className="text-[10px] text-stone-500 leading-tight">Activa si se usa en otras recetas.</p>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+
+                {isIntermediate && (
+                  <div className="mt-5 p-4 bg-amber-50/50 border border-amber-200/50 rounded-xl animate-in fade-in slide-in-from-top-2 duration-300">
+                    <label className="block text-sm font-bold text-amber-900 mb-1.5">
+                      ¿Qué insumo alimenta esta receta?
+                    </label>
+                    <p className="text-xs text-amber-700/80 mb-3">
+                      Cuando produzcas esta receta, su rendimiento se inyectará como stock al insumo seleccionado.
+                    </p>
+                    <select
+                      required
+                      value={associatedSupplyId}
+                      onChange={(e) => { setAssociatedSupplyId(e.target.value); setIsDirty(true); }}
+                      className="w-full px-4 py-2.5 border border-amber-200 rounded-xl focus:ring-2 focus:ring-amber-500 outline-none text-stone-800 bg-white shadow-sm"
+                    >
+                      <option value="" disabled>Seleccionar insumo destino...</option>
+                      {supplies.map(s => (
+                        <option key={s.id} value={s.id}>{s.name} ({s.unit})</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
 
               {/* Ingredients List */}

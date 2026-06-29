@@ -132,5 +132,11 @@ export const inventoryService = {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+  },
+
+  deleteSupply: async (id: string | number): Promise<void> => {
+    return apiFetch(`/supplies/${id}`, {
+      method: 'DELETE',
+    });
   }
 };

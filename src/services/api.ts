@@ -29,5 +29,14 @@ export async function apiFetch<T>(endpoint: string, options?: RequestInit): Prom
     throw new Error(errorData?.message || 'Error en la petición al servidor');
   }
 
-  return response.json();
+  const text = await response.text();
+  if (!text) {
+    return {} as T;
+  }
+  
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    return text as unknown as T;
+  }
 }

@@ -72,6 +72,18 @@ export default function InventoryPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const handleDeleteSupply = async (id: string | number) => {
+    if (!confirm('¿Estás seguro de que deseas eliminar este insumo? Esta acción no se puede deshacer.')) return;
+    
+    try {
+      await inventoryService.deleteSupply(id);
+      fetchData(); // refresh list
+    } catch (err) {
+      console.error(err);
+      setError("Error al eliminar el insumo.");
+    }
+  };
+
   const fetchData = async () => {
     try {
       const [storesData, suppliesData] = await Promise.all([
@@ -410,6 +422,13 @@ export default function InventoryPage() {
                             >
                               <Receipt size={14} />
                               Ingresar Lote
+                            </button>
+                            <button
+                              onClick={() => handleDeleteSupply(supply.id)}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-md transition-colors"
+                              title="Eliminar insumo"
+                            >
+                              <Trash2 size={14} />
                             </button>
                           </div>
                         </td>
