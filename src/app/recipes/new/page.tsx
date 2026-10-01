@@ -28,6 +28,11 @@ export default function NewRecipePage() {
   const [category, setCategory] = useState("");
   const [isIntermediate, setIsIntermediate] = useState(false);
   const [associatedSupplyId, setAssociatedSupplyId] = useState("");
+  const [recipes, setRecipes] = useState<any[]>([]);
+  const [isNewCatCustom, setIsNewCatCustom] = useState(false);
+  
+  // Extract unique categories from recipes
+  const existingCategories = Array.from(new Set(recipes.map(r => r.category).filter(Boolean)));
   
   const [ingredients, setIngredients] = useState<CreateRecipeIngredientDto[]>([
     { supplyId: 0, quantity: 1, unit: "" }
@@ -47,10 +52,21 @@ export default function NewRecipePage() {
       return;
     }
     
-    inventoryService.getSupplies()
-      .then(setSupplies)
-      .catch(console.error)
-      .finally(() => setLoadingInit(false));
+    const loadData = async () => {
+      try {
+        const [suppliesData, recipesData] = await Promise.all([
+          inventoryService.getSupplies(),
+          recipesService.getRecipes().catch(() => [])
+        ]);
+        setSupplies(suppliesData);
+        setRecipes(recipesData);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoadingInit(false);
+      }
+    };
+    loadData();
   }, [router]);
 
   // Extract unique existing categories from existing recipes to suggest them? 
@@ -245,13 +261,35 @@ export default function NewRecipePage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-5 items-end">
                   <div>
                     <label className="block text-sm font-medium text-stone-700 mb-1.5">Categoría de Agrupación</label>
-                    <input
-                      type="text"
-                      value={category}
-                      onChange={(e) => { setCategory(e.target.value); setIsDirty(true); }}
-                      placeholder="Ej. Bases, Vasos 7oz, Rellenos"
+                    <select 
+                      value={isNewCatCustom ? "custom" : category} 
+                      onChange={e => {
+                        if (e.target.value === "custom") {
+                          setIsNewCatCustom(true);
+                          setCategory("");
+                        } else {
+                          setIsNewCatCustom(false);
+                          setCategory(e.target.value);
+                          setIsDirty(true);
+                        }
+                      }}
                       className="w-full px-4 py-2.5 border border-stone-200 rounded-xl focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none text-stone-800 bg-stone-50/50 transition-colors"
-                    />
+                    >
+                      <option value="">Seleccionar categoría...</option>
+                      {existingCategories.map((c: any) => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                      <option value="custom">+ Agregar Nueva Categoría</option>
+                    </select>
+                    {isNewCatCustom && (
+                      <input 
+                        type="text" required
+                        value={category} 
+                        onChange={e => { setCategory(e.target.value); setIsDirty(true); }}
+                        placeholder="Escribe la nueva categoría..."
+                        className="w-full mt-2 px-4 py-2.5 border border-stone-200 rounded-xl focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none text-stone-800 bg-stone-50/50 transition-colors"
+                      />
+                    )}
                   </div>
                   
                   <div className="bg-stone-50 p-3 rounded-xl border border-stone-200/80">

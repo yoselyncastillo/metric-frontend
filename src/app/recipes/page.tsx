@@ -19,7 +19,8 @@ import {
   RefreshCw,
   Store,
   Edit2,
-  Trash2
+  Trash2,
+  Copy
 } from "lucide-react";
 import React from "react";
 
@@ -154,6 +155,36 @@ export default function RecipesPage() {
     }
   };
 
+  const handleDuplicateRecipe = async (recipe: Recipe) => {
+    const newName = prompt("Ingresa el nombre para la receta duplicada:", `${recipe.name} (Copia)`);
+    if (!newName || !newName.trim()) return;
+
+    try {
+      // Map existing ingredients to the DTO payload format
+      const validIngredients = recipe.ingredients.map(ing => ({
+        supplyId: Number(ing.supply?.id || ing.supplyId),
+        quantity: Number(ing.quantity),
+        unit: ing.unit
+      }));
+
+      await recipesService.createRecipe({
+        name: newName.trim(),
+        description: recipe.description || "Copia duplicada",
+        portions: Number(recipe.portions),
+        ingredients: validIngredients,
+        category: recipe.category || "Sin Categoría",
+        isIntermediate: recipe.isIntermediate,
+        ...(recipe.isIntermediate && recipe.associatedSupplyId ? { associatedSupplyId: Number(recipe.associatedSupplyId) } : {})
+      });
+
+      alert("Receta duplicada con éxito.");
+      fetchData(); // refresh list
+    } catch (err: any) {
+      console.error(err);
+      alert(err.message || "Error al duplicar la receta.");
+    }
+  };
+
   if (loadingInit) {
     return (
       <div className="flex h-full min-h-screen items-center justify-center p-8 bg-stone-50">
@@ -176,20 +207,27 @@ export default function RecipesPage() {
   });
 
   return (
-    <div className="p-8 max-w-7xl mx-auto h-full min-h-screen flex flex-col bg-stone-50 relative">
-      <div className="flex justify-between items-end mb-8">
-        <div>
-          <h1 className="text-3xl font-bold text-stone-800 mb-2">Recetas & Costos</h1>
-          <p className="text-stone-500">Diseña tus fórmulas, categoriza y controla márgenes.</p>
+    <div className="min-h-screen bg-stone-50 text-stone-800 pb-20 relative">
+      {/* HEADER */}
+      <div className="bg-white border-b border-stone-200 sticky top-0 z-20 shadow-sm">
+        <div className="max-w-[1400px] mx-auto px-6 py-5 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+          <div>
+            <h1 className="text-2xl font-black text-stone-800 tracking-tight">Recetas & Costos</h1>
+            <p className="text-sm text-stone-500">Diseña tus fórmulas, categoriza y controla márgenes.</p>
+          </div>
+          <div className="flex items-center gap-3 w-full md:w-auto">
+            <Link
+              href="/recipes/new"
+              className="flex-1 md:flex-none justify-center flex items-center gap-2 px-6 py-2.5 text-sm font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-xl transition-all shadow-sm shadow-amber-600/20"
+            >
+              <Plus size={16} />
+              Nueva Receta
+            </Link>
+          </div>
         </div>
-        <Link
-          href="/recipes/new"
-          className="flex items-center gap-2 px-5 py-2.5 bg-stone-800 text-stone-50 rounded-lg hover:bg-stone-900 transition-colors text-sm font-medium shadow-sm"
-        >
-          <Plus size={18} />
-          Nueva Receta
-        </Link>
       </div>
+
+      <div className="max-w-[1400px] mx-auto px-6 mt-8">
 
       {recipes.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center border-2 border-dashed border-stone-200 rounded-2xl bg-white/50 py-20">
@@ -205,103 +243,123 @@ export default function RecipesPage() {
         </div>
       ) : (
         <div className="space-y-6">
-          {categoryKeys.map(category => (
-            <div key={category} className="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden">
-              <button 
-                onClick={() => toggleCategory(category)}
-                className="w-full px-6 py-4 flex items-center justify-between bg-stone-100/50 hover:bg-stone-100 transition-colors border-b border-stone-200/50 outline-none focus:bg-stone-100"
-              >
-                <div className="flex items-center gap-3">
-                  <FolderOpen size={20} className="text-stone-400" />
-                  <h2 className="text-lg font-semibold text-stone-800">{category}</h2>
-                  <span className="px-2 py-0.5 bg-white border border-stone-200 text-stone-500 text-xs rounded-full font-medium shadow-sm">
-                    {groupedRecipes[category].length}
-                  </span>
-                </div>
-                <div className="text-stone-400">
-                  {expandedCategories.has(category) ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
-                </div>
-              </button>
+          {categoryKeys.map(category => {
+            const isExpanded = expandedCategories.has(category);
+            const items = groupedRecipes[category];
 
-              {expandedCategories.has(category) && (
-                <div className="p-6">
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                    {groupedRecipes[category].map((recipe) => {
-                      const costRep = recipe.costSummary?.totalReplacementCost || 0;
-                      const costUnit = recipe.portions > 0 ? costRep / recipe.portions : 0;
-                      const isIntermediate = Boolean(recipe.isIntermediate);
+            // Calculate valuation/costs summary for this category
+            const totalReplacementCostCategory = items.reduce((sum, r) => sum + (r.costSummary?.totalReplacementCost || 0), 0);
 
-                      return (
-                        <div key={recipe.id} className="bg-white rounded-xl p-5 border border-stone-200/80 shadow-sm hover:shadow-md transition-shadow flex flex-col group relative overflow-hidden h-full">
-                          <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
-                            <ChefHat size={64} className="text-amber-900 transform translate-x-4 -translate-y-4" />
-                          </div>
-                          
-                          <div className="flex justify-between items-start mb-2 relative z-10">
-                            <Link href={`/recipes/${recipe.id}`} className="hover:text-amber-600 transition-colors">
-                              <h3 className="text-base font-bold text-stone-800 leading-tight pr-2 group-hover:text-amber-600 transition-colors">{recipe.name}</h3>
-                            </Link>
-                          </div>
-
-                          <div className="flex items-center gap-2 mb-4 relative z-10">
-                            <span className="text-xs font-medium text-stone-500">Rinde {recipe.portions}</span>
-                            <span className="text-stone-300">•</span>
-                            {isIntermediate ? (
-                              <span className="inline-flex items-center gap-1 text-[10px] uppercase font-bold tracking-wider text-blue-700 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded">
-                                Intermedia 🔄
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 text-[10px] uppercase font-bold tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">
-                                Final 🏪
-                              </span>
-                            )}
-                          </div>
-                          
-                          <div className="mt-auto space-y-3 relative z-10 pt-4 border-t border-stone-100/80 mb-4">
-                            <div className="flex justify-between items-end">
-                              <span className="text-[10px] font-semibold text-stone-400 uppercase tracking-wider">Costo Lote</span>
-                              <span className="font-semibold text-stone-700">{formatCurrency(costRep)}</span>
-                            </div>
-                            <div className="flex justify-between items-end">
-                              <span className="text-[10px] font-semibold text-amber-600/70 uppercase tracking-wider">Costo x Porción</span>
-                              <span className="text-base font-bold text-amber-600">{formatCurrency(costUnit)}</span>
-                            </div>
-                          </div>
-
-                          {/* Quick Actions Row */}
-                          <div className="relative z-10 grid grid-cols-1 gap-2 pt-2">
-                            <button
-                              onClick={() => openProductionPanel(recipe)}
-                              className="w-full flex justify-center items-center gap-1.5 px-3 py-2 bg-stone-900 hover:bg-stone-800 text-white rounded-lg text-xs font-bold uppercase tracking-wider transition-colors shadow-sm"
-                            >
-                              <Play size={14} />
-                              Producir
-                            </button>
-                            <div className="grid grid-cols-2 gap-2 mt-1">
-                              <Link
-                                href={`/recipes/edit/${recipe.id}`}
-                                className="flex justify-center items-center gap-1.5 px-3 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-colors"
-                              >
-                                <Edit2 size={12} />
-                                Editar
-                              </Link>
-                              <button
-                                onClick={() => handleDeleteRecipe(recipe.id)}
-                                className="flex justify-center items-center gap-1.5 px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-colors"
-                              >
-                                <Trash2 size={12} />
-                                Eliminar
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
+            return (
+              <div key={category} className="bg-white rounded-2xl border border-stone-200/80 shadow-sm overflow-hidden">
+                <button 
+                  onClick={() => toggleCategory(category)}
+                  className="w-full flex items-center justify-between p-5 bg-stone-50/50 hover:bg-stone-100/50 transition-colors border-b border-stone-100 outline-none"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-white border border-stone-200 flex items-center justify-center text-stone-400 shadow-sm">
+                      <FolderOpen size={16} />
+                    </div>
+                    <h2 className="text-lg font-bold text-stone-800">{category}</h2>
+                    <span className="bg-stone-200 text-stone-600 text-xs font-bold px-2 py-0.5 rounded-full">{items.length}</span>
                   </div>
-                </div>
-              )}
-            </div>
-          ))}
+                  <div className="flex items-center gap-4">
+                    <div className="text-right hidden sm:block">
+                      <p className="text-[10px] uppercase font-bold text-stone-400">Costo Repuesto Cat.</p>
+                      <p className="text-sm font-bold text-amber-800">{formatCurrency(totalReplacementCostCategory)}</p>
+                    </div>
+                    {isExpanded ? <ChevronUp size={20} className="text-stone-400" /> : <ChevronDown size={20} className="text-stone-400" />}
+                  </div>
+                </button>
+
+                {isExpanded && (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left">
+                      <thead>
+                        <tr className="border-b border-stone-100 text-[10px] uppercase tracking-widest text-stone-400 bg-white">
+                          <th className="p-4 pl-6 font-semibold">Receta</th>
+                          <th className="p-4 font-semibold">Tipo</th>
+                          <th className="p-4 font-semibold text-right">Rendimiento</th>
+                          <th className="p-4 font-semibold text-right">Costo Repuesto Lote</th>
+                          <th className="p-4 font-semibold text-right">Costo x Porción</th>
+                          <th className="p-4 pr-6 font-semibold text-right">Acciones</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-stone-50">
+                        {items.map(recipe => {
+                          const costRep = recipe.costSummary?.totalReplacementCost || 0;
+                          const costUnit = recipe.portions > 0 ? costRep / recipe.portions : 0;
+                          const isIntermediate = Boolean(recipe.isIntermediate);
+
+                          return (
+                            <tr key={recipe.id} className="hover:bg-amber-50/30 transition-colors group">
+                              <td className="p-4 pl-6">
+                                <Link 
+                                  href={`/recipes/${recipe.id}`} 
+                                  className="font-bold text-stone-800 group-hover:text-amber-700 transition-colors"
+                                >
+                                  {recipe.name}
+                                </Link>
+                              </td>
+                              <td className="p-4">
+                                {isIntermediate ? (
+                                  <span className="inline-flex items-center gap-1 text-[10px] uppercase font-bold tracking-wider text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-lg">
+                                    Intermedia 🔄
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 text-[10px] uppercase font-bold tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-lg">
+                                    Final 🏪
+                                  </span>
+                                )}
+                              </td>
+                              <td className="p-4 text-right text-stone-600 font-semibold text-sm">
+                                {recipe.portions} porciones
+                              </td>
+                              <td className="p-4 text-right text-stone-600 font-semibold text-sm">
+                                {formatCurrency(costRep)}
+                              </td>
+                              <td className="p-4 text-right font-black text-amber-750 text-base">
+                                {formatCurrency(costUnit)}
+                              </td>
+                              <td className="p-4 pr-6 text-right">
+                                <div className="flex items-center justify-end gap-2">
+                                  <button 
+                                    onClick={() => openProductionPanel(recipe)} 
+                                    className="px-3 py-1.5 bg-stone-900 hover:bg-stone-800 text-white rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-1"
+                                  >
+                                    <Play size={12} /> Producir
+                                  </button>
+                                  <button 
+                                    onClick={() => handleDuplicateRecipe(recipe)} 
+                                    title="Duplicar receta"
+                                    className="p-2 text-stone-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors inline-block"
+                                  >
+                                    <Copy size={16} />
+                                  </button>
+                                  <Link 
+                                    href={`/recipes/edit/${recipe.id}`} 
+                                    className="p-2 text-stone-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors inline-block"
+                                  >
+                                    <Edit2 size={16} />
+                                  </Link>
+                                  <button 
+                                    onClick={() => handleDeleteRecipe(recipe.id)} 
+                                    className="p-2 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                  >
+                                    <Trash2 size={16} />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -442,5 +500,6 @@ export default function RecipesPage() {
       )}
 
     </div>
+      </div>
   );
 }

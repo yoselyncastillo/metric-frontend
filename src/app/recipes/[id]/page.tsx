@@ -10,7 +10,11 @@ import {
   Scale,
   ChefHat,
   AlertCircle,
-  Play
+  Play,
+  Heart,
+  DollarSign,
+  TrendingUp,
+  Coins
 } from "lucide-react";
 import React from "react";
 
@@ -21,8 +25,13 @@ export default function RecipeDetailScalerPage({ params }: { params: Promise<{ i
   const [loadingInit, setLoadingInit] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Scaler State
-  const [targetPortions, setTargetPortions] = useState<string>("");
+  // Scaler State - target portions is restricted strictly to integers
+  const [targetPortions, setTargetPortions] = useState<number>(1);
+
+  // Financial Simulation State (React states)
+  const [overheadPercent, setOverheadPercent] = useState<string>("15");
+  const [salePricePerUnit, setSalePricePerUnit] = useState<string>("0");
+  const [offeringPercent, setOfferingPercent] = useState<string>("10");
 
   useEffect(() => {
     const token = localStorage.getItem("metric_token");
@@ -36,7 +45,12 @@ export default function RecipeDetailScalerPage({ params }: { params: Promise<{ i
         const { id } = await params;
         const recipeData = await recipesService.getRecipeById(id);
         setRecipe(recipeData);
-        setTargetPortions(recipeData.portions.toString());
+        setTargetPortions(Math.round(recipeData.portions || 1));
+        // Set default selling price as unit cost * default markup (e.g. unitCost * 1.5) as a nice starting point
+        const originalCost = recipeData.costSummary?.totalReplacementCost || 0;
+        const defaultPortions = recipeData.portions || 1;
+        const defaultUnitCost = defaultPortions > 0 ? originalCost / defaultPortions : 0;
+        setSalePricePerUnit(Math.round(defaultUnitCost * 1.5).toString());
       } catch (err) {
         console.error(err);
         setError("Error al cargar la receta.");
@@ -73,13 +87,33 @@ export default function RecipeDetailScalerPage({ params }: { params: Promise<{ i
   }
 
   // --- MOTOR DE REESCALADO MATEMÁTICO ---
-  const originalPortions = recipe.portions || 1;
-  const newPortionsNum = Number(targetPortions) > 0 ? Number(targetPortions) : 1;
-  const scaleFactor = newPortionsNum / originalPortions;
+  const originalPortions = Math.round(recipe.portions || 1);
+  const newPortions = targetPortions > 0 ? targetPortions : 1;
+  const scaleFactor = newPortions / originalPortions;
 
   const originalReplacementCost = recipe.costSummary?.totalReplacementCost || 0;
-  const newReplacementCost = originalReplacementCost * scaleFactor;
-  const unitCost = originalPortions > 0 ? originalReplacementCost / originalPortions : 0;
+  const costReposicionTotal = originalReplacementCost * scaleFactor;
+  const unitCostOriginal = originalPortions > 0 ? originalReplacementCost / originalPortions : 0;
+
+  // --- SIMULACIÓN FINANCIERA EN VIVO ---
+  const overhead = Number(overheadPercent) >= 0 ? Number(overheadPercent) : 0;
+  const costoConOverhead = costReposicionTotal * (1 + overhead / 100);
+
+  const pricePerUnit = Number(salePricePerUnit) >= 0 ? Number(salePricePerUnit) : 0;
+  const ingresoTotalProyectado = pricePerUnit * newPortions;
+  const gananciaNetaTotal = ingresoTotalProyectado - costoConOverhead;
+  const margenGananciaPercent = ingresoTotalProyectado > 0 ? (gananciaNetaTotal / ingresoTotalProyectado) * 100 : 0;
+
+  // --- DIEZMO Y OFRENDA EN VIVO ---
+  const diezmo = gananciaNetaTotal > 0 ? gananciaNetaTotal * 0.10 : 0;
+  const offeringRate = Number(offeringPercent) >= 0 ? Number(offeringPercent) : 10;
+  const ofrenda = gananciaNetaTotal > 0 ? gananciaNetaTotal * (offeringRate / 100) : 0;
+  const gananciaDisponibleFinal = gananciaNetaTotal - (diezmo + ofrenda);
+
+  const handlePortionsInputChange = (val: string) => {
+    const num = parseInt(val, 10);
+    setTargetPortions(isNaN(num) ? 1 : Math.max(1, num));
+  };
 
   return (
     <div className="min-h-screen bg-stone-50 text-stone-800 pb-20">
@@ -135,20 +169,20 @@ export default function RecipeDetailScalerPage({ params }: { params: Promise<{ i
             <div className="p-6 md:w-2/3 flex flex-col justify-center bg-amber-50/30">
               <label className="text-xs font-bold text-amber-900 uppercase tracking-widest mb-3 flex items-center gap-2">
                 <Scale size={14} className="text-amber-600" />
-                Cambiar Rendimiento / Reescalar
+                Reescalar Rendimiento (Números Enteros)
               </label>
               <div className="flex items-center gap-4">
                 <input
                   type="number"
-                  min="0.1"
-                  step="0.1"
+                  min="1"
+                  step="1"
                   value={targetPortions}
-                  onChange={(e) => setTargetPortions(e.target.value)}
+                  onChange={(e) => handlePortionsInputChange(e.target.value)}
                   className="w-32 px-4 py-3 text-2xl font-bold text-stone-800 border-2 border-amber-200 rounded-xl focus:ring-4 focus:ring-amber-500/20 focus:border-amber-500 outline-none transition-all text-center bg-white"
                 />
                 <div className="flex flex-col">
                   <span className="text-sm font-medium text-stone-600">Nuevas unidades</span>
-                  <span className="text-xs text-stone-400">Factor de multiplicación: <strong className="text-amber-600 font-bold">{scaleFactor.toFixed(2)}x</strong></span>
+                  <span className="text-xs text-stone-400">Factor de multiplicación: <strong className="text-amber-600 font-bold">{scaleFactor.toFixed(3)}x</strong></span>
                 </div>
               </div>
             </div>
@@ -158,7 +192,7 @@ export default function RecipeDetailScalerPage({ params }: { params: Promise<{ i
           <div className="bg-white rounded-2xl border border-stone-200/80 shadow-sm overflow-hidden">
             <div className="p-5 border-b border-stone-100 bg-stone-50/50">
               <h3 className="text-base font-bold text-stone-800">Receta Reescalada en Vivo</h3>
-              <p className="text-xs text-stone-500 mt-0.5">Sigue estas cantidades exactas en la cocina para tu nuevo rendimiento.</p>
+              <p className="text-xs text-stone-500 mt-0.5">Cantidades exactas multiplicadas por el factor de escala.</p>
             </div>
             
             <table className="w-full text-left">
@@ -202,52 +236,144 @@ export default function RecipeDetailScalerPage({ params }: { params: Promise<{ i
           </div>
         </div>
 
-        {/* COLUMNA DERECHA: COSTOS EN VIVO */}
-        <div className="w-full lg:w-1/3">
-          <div className="sticky top-28">
-            <div className="bg-stone-900 rounded-2xl p-6 shadow-xl relative overflow-hidden text-stone-100">
-              <div className="absolute top-0 right-0 w-40 h-40 bg-amber-500/10 rounded-full blur-3xl transform translate-x-12 -translate-y-12 pointer-events-none"></div>
-              
-              <h3 className="text-lg font-bold text-white mb-6 flex items-center gap-2 relative z-10">
-                <Calculator size={20} className="text-amber-500" />
-                Costos del Lote
-              </h3>
+        {/* COLUMNA DERECHA: PANEL DE SIMULACIÓN FINANCIERA */}
+        <div className="w-full lg:w-1/3 space-y-6">
+          <div className="bg-stone-900 rounded-2xl p-6 shadow-xl relative overflow-hidden text-stone-100">
+            <div className="absolute top-0 right-0 w-40 h-40 bg-amber-500/10 rounded-full blur-3xl transform translate-x-12 -translate-y-12 pointer-events-none"></div>
+            
+            <h3 className="text-lg font-bold text-white mb-6 flex items-center gap-2 relative z-10">
+              <Calculator size={20} className="text-amber-500" />
+              Simulador Financiero en Vivo
+            </h3>
 
-              <div className="space-y-4 relative z-10">
-                <div className="bg-stone-800/50 border border-stone-700/50 rounded-xl p-5">
-                  <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1 flex justify-between">
-                    <span>Costo Unitario</span>
-                    <span className="text-stone-500">Invariable</span>
-                  </p>
-                  <p className="text-xl font-bold text-stone-300">{formatCurrency(unitCost)}</p>
-                </div>
+            <div className="space-y-4 relative z-10">
+              {/* Costo Reposición Total */}
+              <div className="bg-stone-800/60 border border-stone-700/50 rounded-xl p-4">
+                <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1 flex justify-between">
+                  <span>Costo Reposición Lote</span>
+                  <span className="text-stone-500">Base</span>
+                </p>
+                <p className="text-2xl font-black text-white">{formatCurrency(costReposicionTotal)}</p>
+                <p className="text-[10px] text-stone-500 mt-1">Costo Unit. original: {formatCurrency(unitCostOriginal)}</p>
+              </div>
 
-                <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-5">
-                  <p className="text-[10px] font-bold text-amber-400 uppercase tracking-widest mb-1 flex justify-between">
-                    <span>Costo Lote Escalado</span>
-                    <span className="text-amber-500/60">Para {newPortionsNum} uds</span>
-                  </p>
-                  <p className="text-3xl font-black text-amber-400">{formatCurrency(newReplacementCost)}</p>
-                  <p className="text-xs text-amber-500/70 mt-2 font-medium">
-                    Esto es lo que te cuesta (a precio de reposición) producir este nuevo lote hoy.
-                  </p>
+              {/* % Gastos Operativos (Overhead) */}
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-stone-300 mb-1.5">
+                  % Gastos Operativos (Overhead)
+                </label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.5"
+                    value={overheadPercent}
+                    onChange={(e) => setOverheadPercent(e.target.value)}
+                    className="w-full px-4 py-2.5 bg-stone-800/80 border border-stone-700 rounded-xl text-stone-100 font-bold focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none pr-10"
+                  />
+                  <span className="absolute right-3.5 top-1/2 -translate-y-1/2 font-bold text-stone-500">%</span>
                 </div>
               </div>
 
-              <div className="mt-6 pt-6 border-t border-stone-800 relative z-10">
-                <button
-                  onClick={() => {
-                    // Open the global production panel via state if needed, or route back to recipes
-                    // But since we are isolated, routing back to recipes is easiest for production trigger.
-                    router.push('/recipes');
-                  }}
-                  className="w-full flex justify-center items-center gap-2 px-6 py-4 bg-white text-stone-900 hover:bg-stone-100 rounded-xl text-sm font-bold transition-all shadow-sm group"
-                >
-                  <Play size={16} className="group-hover:scale-110 transition-transform text-amber-600" />
-                  Ir al Catálogo a Producir
-                </button>
+              {/* Costo Total con Overhead */}
+              <div className="bg-stone-800/60 border border-stone-700/50 rounded-xl p-4 flex justify-between items-center">
+                <div>
+                  <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">Costo Total con Overhead</p>
+                  <p className="text-lg font-bold text-stone-200 mt-0.5">{formatCurrency(costoConOverhead)}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[9px] font-bold text-stone-500 uppercase">Margen Overhead</p>
+                  <p className="text-xs font-semibold text-stone-400">+{formatCurrency(costoConOverhead - costReposicionTotal)}</p>
+                </div>
+              </div>
+
+              {/* Precio de Venta por Unidad */}
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-stone-300 mb-1.5">
+                  Precio de Venta Sugerido (Por Unidad)
+                </label>
+                <div className="relative">
+                  <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-500" size={16} />
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={salePricePerUnit}
+                    onChange={(e) => setSalePricePerUnit(e.target.value)}
+                    className="w-full pl-9 pr-4 py-2.5 bg-stone-800/80 border border-stone-700 rounded-xl text-stone-100 font-bold focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* Resultados de la Simulación */}
+              <div className="bg-stone-800/30 border border-stone-700/30 rounded-xl p-4 space-y-3">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-stone-400">Ingreso Proyectado:</span>
+                  <span className="font-semibold text-stone-200">{formatCurrency(ingresoTotalProyectado)}</span>
+                </div>
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-stone-400">Ganancia Neta Lote:</span>
+                  <span className={`font-bold ${gananciaNetaTotal >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                    {formatCurrency(gananciaNetaTotal)}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-xs border-t border-stone-800 pt-2">
+                  <span className="text-stone-400 flex items-center gap-1"><TrendingUp size={12}/> Margen Comercial:</span>
+                  <span className={`font-black ${margenGananciaPercent >= 30 ? "text-emerald-400" : margenGananciaPercent >= 0 ? "text-amber-400" : "text-rose-400"}`}>
+                    {margenGananciaPercent.toFixed(1)}%
+                  </span>
+                </div>
               </div>
             </div>
+
+            {/* MÓDULO DE DIEZMO Y OFRENDAS */}
+            {gananciaNetaTotal > 0 && (
+              <div className="mt-6 pt-6 border-t border-stone-800 relative z-10 space-y-4">
+                <h4 className="text-sm font-bold text-white flex items-center gap-1.5">
+                  <Coins size={16} className="text-amber-500" />
+                  Aportes y Distribución
+                </h4>
+
+                <div className="grid grid-cols-2 gap-4">
+                  {/* Diezmo Fijo */}
+                  <div className="bg-stone-800/60 border border-stone-700/50 rounded-xl p-3.5">
+                    <p className="text-[9px] font-bold text-stone-400 uppercase tracking-wider mb-0.5 flex justify-between">
+                      <span>Diezmo</span>
+                      <span className="text-amber-500 font-bold">10%</span>
+                    </p>
+                    <p className="text-base font-bold text-stone-200">{formatCurrency(diezmo)}</p>
+                  </div>
+
+                  {/* Ofrenda Variable */}
+                  <div className="bg-stone-800/60 border border-stone-700/50 rounded-xl p-3">
+                    <label className="block text-[9px] font-bold text-stone-400 uppercase tracking-wider mb-1.5">
+                      % Ofrenda Deseada
+                    </label>
+                    <div className="flex gap-1.5 items-center">
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="1"
+                        value={offeringPercent}
+                        onChange={(e) => setOfferingPercent(e.target.value)}
+                        className="w-12 px-1 py-0.5 text-xs bg-stone-900 border border-stone-700 rounded text-center font-bold text-white"
+                      />
+                      <span className="text-stone-300 font-bold text-xs">{formatCurrency(ofrenda)}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Ganancia Disponible Final */}
+                <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4 flex justify-between items-center">
+                  <div>
+                    <p className="text-[10px] font-bold text-amber-400 uppercase tracking-widest">Ganancia Disponible Final</p>
+                    <p className="text-xl font-black text-amber-400 mt-0.5">{formatCurrency(gananciaDisponibleFinal)}</p>
+                  </div>
+                  <Heart size={20} className="text-amber-500 shrink-0" />
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

@@ -124,6 +124,9 @@ export default function InventoryPage() {
   const [newSupplyStoreId, setNewSupplyStoreId] = useState("");
   const [newSupplyInitQty, setNewSupplyInitQty] = useState("");
   const [newSupplyTotalPaid, setNewSupplyTotalPaid] = useState("");
+  const [newSupplyFormatName, setNewSupplyFormatName] = useState("");
+  const [newSupplyFormatQty, setNewSupplyFormatQty] = useState("");
+  const [newSupplyDate, setNewSupplyDate] = useState(new Date().toLocaleDateString('en-CA'));
 
   const handleCreateStore = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -132,10 +135,10 @@ export default function InventoryPage() {
     try {
       await inventoryService.createStore({ 
         name: newStoreName,
-        address: newStoreAddress,
-        phone: newStorePhone,
-        instagramUrl: newStoreIg,
-        mapsUrl: newStoreMaps
+        address: newStoreAddress.trim() || undefined,
+        phone: newStorePhone.trim() || undefined,
+        instagramUrl: newStoreIg.trim() || undefined,
+        mapsUrl: newStoreMaps.trim() || undefined
       });
       showSuccess("Tienda/Proveedor creado con éxito.");
       setNewStoreName("");
@@ -173,8 +176,19 @@ export default function InventoryPage() {
         category: newSupplyCat || undefined,
         initialQuantity: newSupplyInitQty ? Number(newSupplyInitQty) : undefined,
         totalPaid: newSupplyTotalPaid ? Number(newSupplyTotalPaid) : undefined,
-        storeId: newSupplyStoreId ? Number(newSupplyStoreId) : undefined
+        storeId: newSupplyStoreId ? Number(newSupplyStoreId) : undefined,
+        createdAt: newSupplyInitQty ? getLocalDateISO(newSupplyDate) : undefined
       });
+      
+      // If a format was specified, create it for this new supply
+      if (newSupplyFormatName && newSupplyFormatQty) {
+        await inventoryService.addFormat({
+          supplyId: supply.id,
+          name: newSupplyFormatName,
+          quantity: Number(newSupplyFormatQty)
+        });
+      }
+      
       showSuccess("Insumo creado con éxito.");
       setNewSupplyPanel(false);
       setNewSupplyName("");
@@ -182,6 +196,9 @@ export default function InventoryPage() {
       setNewSupplyInitQty("");
       setNewSupplyTotalPaid("");
       setNewSupplyStoreId("");
+      setNewSupplyFormatName("");
+      setNewSupplyFormatQty("");
+      setNewSupplyDate(new Date().toLocaleDateString('en-CA'));
       fetchData();
     } catch (err: any) {
       showError(err.message || "Error al crear insumo.");
@@ -213,10 +230,10 @@ export default function InventoryPage() {
 
   const [invoiceStoreId, setInvoiceStoreId] = useState("");
   const [invoiceDate, setInvoiceDate] = useState(new Date().toLocaleDateString('en-CA')); // YYYY-MM-DD format based on local time
-  const [invoiceRows, setInvoiceRows] = useState([{ supplyId: "", quantity: "", totalCost: "" }]);
+  const [invoiceRows, setInvoiceRows] = useState([{ supplyId: "", quantity: "", totalCost: "", formatId: "", type: "libre" }]);
 
   const addInvoiceRow = () => {
-    setInvoiceRows([...invoiceRows, { supplyId: "", quantity: "", totalCost: "" }]);
+    setInvoiceRows([...invoiceRows, { supplyId: "", quantity: "", totalCost: "", formatId: "", type: "libre" }]);
   };
 
   const removeInvoiceRow = (index: number) => {
@@ -245,19 +262,23 @@ export default function InventoryPage() {
 
     setIsSubmitting(true);
     try {
-      const promises = validRows.map(row => 
-        inventoryService.createBatch({
+      const promises = validRows.map(row => {
+        const payload: any = {
           supplyId: row.supplyId,
           storeId: invoiceStoreId,
-          quantity: Number(row.quantity),
+          quantity: Number(row.quantity), // Si es formato, esto son 'unidades del formato', el backend lo multiplica internamente porque creamos el endpoint createBatch. Oh wait, el backend toma initialQuantity y lo sobreescribe si hay formatId. O sea mandamos quantity como las unidades.
           unitCost: Number(row.totalCost) / Number(row.quantity),
           createdAt: getLocalDateISO(invoiceDate)
-        })
-      );
+        };
+        if (row.type === "formato" && row.formatId) {
+          payload.supplyFormatId = row.formatId;
+        }
+        return inventoryService.createBatch(payload);
+      });
       await Promise.all(promises);
       showSuccess("¡Factura registrada con éxito!");
       setInvoicePanelOpen(false);
-      setInvoiceRows([{ supplyId: "", quantity: "", totalCost: "" }]);
+      setInvoiceRows([{ supplyId: "", quantity: "", totalCost: "", formatId: "", type: "libre" }]);
       fetchData();
     } catch (err: any) {
       showError(err.message || "Error al registrar la factura.");
@@ -312,11 +333,19 @@ export default function InventoryPage() {
   // --- EDIT SUPPLY ---
   const [editSupplyCat, setEditSupplyCat] = useState("");
   const [editSupplyNameLocal, setEditSupplyNameLocal] = useState("");
+  const [newFormatName, setNewFormatName] = useState("");
+  const [newFormatQty, setNewFormatQty] = useState("");
+  const [newConversionName, setNewConversionName] = useState("");
+  const [newConversionFactor, setNewConversionFactor] = useState("");
   
   const openEditSupply = (s: Supply) => {
     setEditSupplyCat(s.category || "");
     setEditSupplyNameLocal(s.name);
     setEditSupplyPanel(s);
+    setNewFormatName("");
+    setNewFormatQty("");
+    setNewConversionName("");
+    setNewConversionFactor("");
   };
 
   const handleSaveSupply = async (e: React.FormEvent) => {
@@ -333,6 +362,71 @@ export default function InventoryPage() {
       fetchData();
     } catch (err: any) {
       showError(err.message || "Error al actualizar insumo.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleCreateFormat = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editSupplyPanel || !newFormatName || !newFormatQty) return;
+    setIsSubmitting(true);
+    try {
+      await inventoryService.addFormat({
+        supplyId: editSupplyPanel.id,
+        name: newFormatName,
+        quantity: Number(newFormatQty)
+      });
+      showSuccess("Formato agregado.");
+      setNewFormatName("");
+      setNewFormatQty("");
+      // Update local editSupplyPanel state
+      const updatedSupplies = await inventoryService.getSupplies();
+      const updatedPanel = updatedSupplies.find(s => s.id === editSupplyPanel.id);
+      if (updatedPanel) setEditSupplyPanel(updatedPanel);
+      fetchData();
+    } catch (err: any) {
+      showError(err.message || "Error al agregar formato.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleCreateConversion = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editSupplyPanel || !newConversionName || !newConversionFactor) return;
+    setIsSubmitting(true);
+    try {
+      await inventoryService.addConversion(editSupplyPanel.id, {
+        name: newConversionName.trim(),
+        factor: Number(newConversionFactor)
+      });
+      showSuccess("Conversión de unidad agregada.");
+      setNewConversionName("");
+      setNewConversionFactor("");
+      const updatedSupplies = await inventoryService.getSupplies();
+      const updatedPanel = updatedSupplies.find(s => s.id === editSupplyPanel.id);
+      if (updatedPanel) setEditSupplyPanel(updatedPanel);
+      fetchData();
+    } catch (err: any) {
+      showError(err.message || "Error al agregar conversión.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDeleteConversion = async (conversionId: string | number) => {
+    if (!confirm("¿Eliminar esta conversión?")) return;
+    setIsSubmitting(true);
+    try {
+      await inventoryService.removeConversion(conversionId);
+      showSuccess("Conversión eliminada.");
+      const updatedSupplies = await inventoryService.getSupplies();
+      const updatedPanel = updatedSupplies.find(s => s.id === editSupplyPanel?.id);
+      if (updatedPanel) setEditSupplyPanel(updatedPanel);
+      fetchData();
+    } catch (err: any) {
+      showError(err.message || "Error al eliminar conversión.");
     } finally {
       setIsSubmitting(false);
     }
@@ -418,6 +512,14 @@ export default function InventoryPage() {
               const isExpanded = expandedCategories.has(category);
               if (items.length === 0) return null;
 
+              // Calculate total valuation for the entire category based on active stock (remainingQuantity * costPerUnit)
+              const categoryValuation = items.reduce((total, supply) => {
+                const supplyValuation = (supply.batches || []).reduce((acc, batch) => {
+                  return acc + (Number(batch.remainingQuantity || 0) * Number(batch.costPerUnit || 0));
+                }, 0);
+                return total + supplyValuation;
+              }, 0);
+
               return (
                 <div key={category} className="bg-white rounded-2xl border border-stone-200/80 shadow-sm overflow-hidden">
                   <button 
@@ -431,7 +533,13 @@ export default function InventoryPage() {
                       <h2 className="text-lg font-bold text-stone-800">{category}</h2>
                       <span className="bg-stone-200 text-stone-600 text-xs font-bold px-2 py-0.5 rounded-full">{items.length}</span>
                     </div>
-                    {isExpanded ? <ChevronDown size={20} className="text-stone-400" /> : <ChevronRight size={20} className="text-stone-400" />}
+                    <div className="flex items-center gap-4">
+                      <div className="text-right hidden sm:block">
+                        <p className="text-[10px] uppercase font-bold text-stone-400">Valor Categoría</p>
+                        <p className="text-sm font-bold text-amber-800">{formatCurrency(categoryValuation)}</p>
+                      </div>
+                      {isExpanded ? <ChevronDown size={20} className="text-stone-400" /> : <ChevronRight size={20} className="text-stone-400" />}
+                    </div>
                   </button>
 
                   {isExpanded && (
@@ -441,6 +549,7 @@ export default function InventoryPage() {
                           <tr className="border-b border-stone-100 text-[10px] uppercase tracking-widest text-stone-400 bg-white">
                             <th className="p-4 pl-6 font-semibold">Insumo</th>
                             <th className="p-4 font-semibold text-right">Stock Total</th>
+                            <th className="p-4 font-semibold text-right">Valor Inventario</th>
                             <th className="p-4 pr-6 font-semibold text-right">Acciones</th>
                           </tr>
                         </thead>
@@ -450,6 +559,12 @@ export default function InventoryPage() {
                             const sortedBatches = supply.batches 
                               ? [...supply.batches].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
                               : [];
+                            
+                            // Calculate total inventory valuation for this supply row
+                            const supplyValuation = sortedBatches.reduce((acc, batch) => {
+                              return acc + (Number(batch.remainingQuantity || 0) * Number(batch.costPerUnit || 0));
+                            }, 0);
+
                             return (
                             <React.Fragment key={supply.id}>
                               <tr 
@@ -466,6 +581,9 @@ export default function InventoryPage() {
                                   <span className="text-lg font-black text-stone-700 mr-1">{Number(supply.totalAvailable || 0).toFixed(2)}</span>
                                   <span className="text-xs font-bold text-stone-400">{supply.unit}</span>
                                 </td>
+                                <td className="p-4 text-right font-bold text-amber-900">
+                                  {formatCurrency(supplyValuation)}
+                                </td>
                                 <td className="p-4 pr-6 text-right">
                                   <div className="flex items-center justify-end gap-2" onClick={e => e.stopPropagation()}>
                                     <button onClick={() => openEditSupply(supply)} className="p-2 text-stone-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors">
@@ -481,7 +599,7 @@ export default function InventoryPage() {
                               {/* ACCORDION BATCH HISTORY */}
                               {isExpandedSupply && (
                                 <tr>
-                                  <td colSpan={3} className="p-0 border-b border-stone-200">
+                                  <td colSpan={4} className="p-0 border-b border-stone-200">
                                     <div className="bg-stone-50/80 px-8 py-6 shadow-inner border-t border-stone-200/50">
                                       <div className="bg-white rounded-xl border border-stone-200 shadow-sm overflow-hidden">
                                         <table className="w-full text-left">
@@ -769,33 +887,64 @@ export default function InventoryPage() {
                 </div>
                 
                 <div className="space-y-3">
-                  {invoiceRows.map((row, idx) => (
+                  {invoiceRows.map((row, idx) => {
+                    const selectedSupply = supplies.find(s => String(s.id) === String(row.supplyId));
+                    const hasFormats = selectedSupply && selectedSupply.formats && selectedSupply.formats.length > 0;
+                    return (
                     <div key={idx} className="bg-white p-4 rounded-xl border border-stone-200 shadow-sm flex items-start gap-3">
-                      <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-3">
-                        <div>
-                          <label className="block text-[10px] font-bold text-stone-400 uppercase mb-1">Insumo</label>
-                          <select 
-                            value={row.supplyId} 
-                            onChange={e => updateInvoiceRow(idx, "supplyId", e.target.value)}
-                            className="w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-lg text-sm font-medium focus:outline-none focus:border-amber-500"
-                          >
-                            <option value="">Seleccionar...</option>
-                            {Object.keys(groupedSupplies).map(cat => (
-                              <optgroup key={cat} label={cat}>
-                                {groupedSupplies[cat].map(s => (
-                                  <option key={s.id} value={s.id}>{s.name} ({s.unit})</option>
+                      <div className="flex-1 grid grid-cols-1 md:grid-cols-4 gap-3">
+                        <div className="md:col-span-2">
+                          <label className="block text-[10px] font-bold text-stone-400 uppercase mb-1">Insumo y Modo de Ingreso</label>
+                          <div className="flex gap-2">
+                            <select 
+                              value={row.supplyId} 
+                              onChange={e => {
+                                updateInvoiceRow(idx, "supplyId", e.target.value);
+                                updateInvoiceRow(idx, "type", "libre");
+                                updateInvoiceRow(idx, "formatId", "");
+                              }}
+                              className="flex-1 px-3 py-2 bg-stone-50 border border-stone-200 rounded-lg text-sm font-medium focus:outline-none focus:border-amber-500"
+                            >
+                              <option value="">Seleccionar...</option>
+                              {Object.keys(groupedSupplies).map(cat => (
+                                <optgroup key={cat} label={cat}>
+                                  {groupedSupplies[cat].map(s => (
+                                    <option key={s.id} value={s.id}>{s.name} ({s.unit})</option>
+                                  ))}
+                                </optgroup>
+                              ))}
+                            </select>
+                            {hasFormats && (
+                              <select
+                                value={row.type === "formato" ? row.formatId : "libre"}
+                                onChange={e => {
+                                  if (e.target.value === "libre") {
+                                    updateInvoiceRow(idx, "type", "libre");
+                                    updateInvoiceRow(idx, "formatId", "");
+                                  } else {
+                                    updateInvoiceRow(idx, "type", "formato");
+                                    updateInvoiceRow(idx, "formatId", e.target.value);
+                                  }
+                                }}
+                                className="w-1/3 px-3 py-2 bg-stone-50 border border-stone-200 rounded-lg text-sm font-medium focus:outline-none focus:border-amber-500"
+                              >
+                                <option value="libre">Libre ({selectedSupply.unit})</option>
+                                {selectedSupply.formats?.map(f => (
+                                  <option key={f.id} value={f.id}>{f.name}</option>
                                 ))}
-                              </optgroup>
-                            ))}
-                          </select>
+                              </select>
+                            )}
+                          </div>
                         </div>
                         <div>
-                          <label className="block text-[10px] font-bold text-stone-400 uppercase mb-1">Cant. Comprada</label>
+                          <label className="block text-[10px] font-bold text-stone-400 uppercase mb-1">
+                            {row.type === "formato" ? "Cant. de Formatos" : "Cant. Comprada"}
+                          </label>
                           <input 
                             type="number" min="0" step="any"
                             value={row.quantity} 
                             onChange={e => updateInvoiceRow(idx, "quantity", e.target.value)}
-                            placeholder="Ej. 1000"
+                            placeholder="Ej. 10"
                             className="w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-lg text-sm font-medium focus:outline-none focus:border-amber-500"
                           />
                         </div>
@@ -817,7 +966,7 @@ export default function InventoryPage() {
                         <Trash2 size={16} />
                       </button>
                     </div>
-                  ))}
+                  )})}
                 </div>
               </div>
 
@@ -901,6 +1050,76 @@ export default function InventoryPage() {
                 )}
               </div>
             </form>
+            
+            <div className="px-6 py-4 border-t border-stone-200">
+              <h3 className="text-sm font-bold uppercase tracking-widest text-stone-400 mb-3">Formatos / Presentaciones</h3>
+              <div className="space-y-2 mb-4">
+                {editSupplyPanel.formats && editSupplyPanel.formats.length > 0 ? (
+                  editSupplyPanel.formats.map((f: any) => (
+                    <div key={f.id} className="flex justify-between items-center bg-stone-100 px-3 py-2 rounded-lg text-sm">
+                      <span className="font-semibold text-stone-700">{f.name}</span>
+                      <span className="text-stone-500">{f.quantity} {editSupplyPanel.unit}</span>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-xs text-stone-400 italic">Sin formatos registrados.</p>
+                )}
+              </div>
+              <form onSubmit={handleCreateFormat} className="flex gap-2">
+                <input 
+                  type="text" placeholder="Ej. Mavesa 500g" required
+                  value={newFormatName} onChange={e => setNewFormatName(e.target.value)}
+                  className="flex-1 px-3 py-2 bg-white border border-stone-200 rounded-lg text-xs font-medium focus:border-amber-500 outline-none"
+                />
+                <input 
+                  type="number" step="any" placeholder={`Cant. (${editSupplyPanel.unit})`} required
+                  value={newFormatQty} onChange={e => setNewFormatQty(e.target.value)}
+                  className="w-24 px-3 py-2 bg-white border border-stone-200 rounded-lg text-xs font-medium focus:border-amber-500 outline-none"
+                />
+                <button type="submit" disabled={isSubmitting} className="p-2 bg-stone-200 hover:bg-stone-300 text-stone-700 rounded-lg transition-colors">
+                  <Plus size={16} />
+                </button>
+              </form>
+            </div>
+            
+            <div className="px-6 py-4 border-t border-stone-200">
+              <h3 className="text-sm font-bold uppercase tracking-widest text-stone-400 mb-3">Conversiones de Unidades</h3>
+              <div className="space-y-2 mb-4">
+                {editSupplyPanel.unitConversions && editSupplyPanel.unitConversions.length > 0 ? (
+                  editSupplyPanel.unitConversions.map((uc: any) => (
+                    <div key={uc.id} className="flex justify-between items-center bg-stone-100 px-3 py-2 rounded-lg text-sm">
+                      <span className="font-semibold text-stone-700">1 {uc.name}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-stone-500">= {uc.factor} {editSupplyPanel.unit}</span>
+                        <button 
+                          onClick={() => handleDeleteConversion(uc.id)}
+                          className="text-stone-400 hover:text-red-500 transition-colors p-0.5"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-xs text-stone-400 italic">Sin conversiones registradas.</p>
+                )}
+              </div>
+              <form onSubmit={handleCreateConversion} className="flex gap-2">
+                <input 
+                  type="text" placeholder="Ej. taza" required
+                  value={newConversionName} onChange={e => setNewConversionName(e.target.value)}
+                  className="flex-1 px-3 py-2 bg-white border border-stone-200 rounded-lg text-xs font-medium focus:border-amber-500 outline-none"
+                />
+                <input 
+                  type="number" step="any" placeholder="Factor" required
+                  value={newConversionFactor} onChange={e => setNewConversionFactor(e.target.value)}
+                  className="w-24 px-3 py-2 bg-white border border-stone-200 rounded-lg text-xs font-medium focus:border-amber-500 outline-none"
+                />
+                <button type="submit" disabled={isSubmitting} className="p-2 bg-stone-200 hover:bg-stone-300 text-stone-700 rounded-lg transition-colors">
+                  <Plus size={16} />
+                </button>
+              </form>
+            </div>
             
             <div className="p-6 bg-white border-t border-stone-200">
               <button 
@@ -987,16 +1206,30 @@ export default function InventoryPage() {
                 <p className="text-xs text-stone-500 leading-relaxed mb-4">Puedes registrar el primer lote ahora o dejarlo vacío.</p>
                 
                 <div className="space-y-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-stone-500 mb-1">Proveedor / Tienda</label>
-                    <select 
-                      value={newSupplyStoreId} 
-                      onChange={e => setNewSupplyStoreId(e.target.value)}
-                      className="w-full px-4 py-2.5 bg-stone-50 border border-stone-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
-                    >
-                      <option value="">Sin tienda...</option>
-                      {stores.map(st => <option key={st.id} value={st.id}>{st.name}</option>)}
-                    </select>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-stone-500 mb-1">Proveedor / Tienda</label>
+                      <select 
+                        value={newSupplyStoreId} 
+                        onChange={e => setNewSupplyStoreId(e.target.value)}
+                        className="w-full px-4 py-2.5 bg-stone-50 border border-stone-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
+                      >
+                        <option value="">Sin tienda...</option>
+                        {stores.map(st => <option key={st.id} value={st.id}>{st.name}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-stone-500 mb-1">Fecha de Compra</label>
+                      <div className="relative">
+                        <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" size={16} />
+                        <input 
+                          type="date" 
+                          value={newSupplyDate} 
+                          onChange={e => setNewSupplyDate(e.target.value)}
+                          className="w-full pl-9 pr-4 py-2 bg-stone-50 border border-stone-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
+                        />
+                      </div>
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
@@ -1020,6 +1253,23 @@ export default function InventoryPage() {
                       />
                     </div>
                   </div>
+                </div>
+              </div>
+
+              <div className="pt-4 border-t border-stone-100">
+                <h4 className="font-semibold text-stone-800 mb-1">Formato Inicial <span className="text-xs font-normal text-stone-400">(Opcional)</span></h4>
+                <p className="text-xs text-stone-500 leading-relaxed mb-4">Puedes registrar un formato de compra base (Ej. Saco de 50Kg).</p>
+                <div className="flex gap-2">
+                  <input 
+                    type="text" placeholder="Ej. Saco de 50Kg"
+                    value={newSupplyFormatName} onChange={e => setNewSupplyFormatName(e.target.value)}
+                    className="flex-1 px-4 py-2.5 bg-stone-50 border border-stone-200 rounded-xl text-sm font-medium focus:border-amber-500 outline-none"
+                  />
+                  <input 
+                    type="number" step="any" placeholder={`Cant. (${newSupplyUnit})`}
+                    value={newSupplyFormatQty} onChange={e => setNewSupplyFormatQty(e.target.value)}
+                    className="w-28 px-4 py-2.5 bg-stone-50 border border-stone-200 rounded-xl text-sm font-medium focus:border-amber-500 outline-none"
+                  />
                 </div>
               </div>
             </form>

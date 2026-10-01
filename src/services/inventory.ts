@@ -48,6 +48,7 @@ export interface CreateBatchPayload {
   storeId: string | number;
   quantity: number;
   unitCost: number;
+  supplyFormatId?: number;
   expirationDate?: string | null;
   createdAt?: string;
 }
@@ -67,6 +68,7 @@ export interface CreateSupplyPayload {
   initialQuantity?: number;
   totalPaid?: number;
   storeId?: number;
+  createdAt?: string;
 }
 
 export interface CreateUnitConversionPayload {
@@ -123,20 +125,21 @@ export const inventoryService = {
         storeId: payload.storeId,
         initialQuantity: payload.quantity, 
         totalPaid: payload.unitCost * payload.quantity,
+        ...(payload.supplyFormatId ? { supplyFormatId: payload.supplyFormatId } : {}),
         ...(payload.createdAt ? { createdAt: payload.createdAt } : {})
       }),
     });
   },
 
   updateBatch: async (batchId: string | number, payload: { quantity?: number; remainingQuantity?: number; price?: number }): Promise<Batch> => {
-    return apiFetch<Batch>(`/supplies/batches/${batchId}`, {
+    return apiFetch<Batch>(`/batches/${batchId}`, {
       method: 'PATCH',
       body: JSON.stringify(payload),
     });
   },
 
   deleteBatch: async (batchId: string | number): Promise<void> => {
-    return apiFetch(`/supplies/batches/${batchId}`, {
+    return apiFetch(`/batches/${batchId}`, {
       method: 'DELETE',
     });
   },

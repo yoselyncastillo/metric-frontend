@@ -1,6 +1,6 @@
 export async function apiFetch<T>(endpoint: string, options?: RequestInit): Promise<T> {
   const token = typeof window !== 'undefined' ? localStorage.getItem('metric_token') : null;
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
   const headers = new Headers(options?.headers);
   if (token) {
@@ -26,7 +26,19 @@ export async function apiFetch<T>(endpoint: string, options?: RequestInit): Prom
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => null);
-    throw new Error(errorData?.message || 'Error en la petición al servidor');
+    let errorMessage = 'Error en la petición al servidor';
+    
+    if (errorData) {
+      if (typeof errorData.message === 'string') {
+        errorMessage = errorData.message;
+      } else if (Array.isArray(errorData.message)) {
+        errorMessage = errorData.message.join(', ');
+      } else if (errorData.error) {
+        errorMessage = errorData.error;
+      }
+    }
+    
+    throw new Error(errorMessage);
   }
 
   const text = await response.text();
