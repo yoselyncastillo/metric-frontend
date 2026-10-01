@@ -29,7 +29,7 @@ export default function RecipeDetailScalerPage({ params }: { params: Promise<{ i
   const [targetPortions, setTargetPortions] = useState<number>(1);
 
   // Financial Simulation State (React states)
-  const [overheadPercent, setOverheadPercent] = useState<string>("15");
+  const [overheadPercent, setOverheadPercent] = useState<string>("0");
   const [salePricePerUnit, setSalePricePerUnit] = useState<string>("0");
   const [offeringPercent, setOfferingPercent] = useState<string>("10");
 

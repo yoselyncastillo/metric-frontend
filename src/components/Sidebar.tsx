@@ -7,7 +7,9 @@ import {
   ChefHat, 
   Package, 
   Users, 
-  LogOut 
+  LogOut,
+  Store,
+  Wallet
 } from "lucide-react";
 
 export default function Sidebar() {
@@ -27,6 +29,8 @@ export default function Sidebar() {
     { name: "Inicio", href: "/", icon: LayoutDashboard },
     { name: "Recetas & Costos", href: "/recipes", icon: ChefHat },
     { name: "Inventario & Lotes", href: "/inventory", icon: Package },
+    { name: "Vitrina & Consignación", href: "/vitrina", icon: Store },
+    { name: "Finanzas & Cierres", href: "/finanzas", icon: Wallet },
     { name: "Clientes & Gastos", href: "/accounting", icon: Users },
   ];
 
